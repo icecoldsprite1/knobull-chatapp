@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Environment Secrets (CRITICAL for safety)
+.env
+.env.local
+
+# Build Outputs
+build/
+dist/
+
+# OS/IDE junk
+.DS_Store
+.vscode/
+.idea/
+*.log
