@@ -4,6 +4,7 @@ node_modules/
 # Environment Secrets (CRITICAL for safety)
 .env
 .env.local
+firebase-service-account.json
 
 # Build Outputs
 build/
