@@ -10,11 +10,16 @@ const supabase = createClient(
  * Called when an Expert logs in and grants notification permission.
  */
 const registerDevice = async (req, res) => {
+  // 🚨 AUTHORIZATION CHECK 🚨
+  if (req.user.is_anonymous) {
+    return res.status(403).json({ error: 'Forbidden: Only experts can receive dashboard notifications.' });
+  }
+
   const { token } = req.body;
   const userId = req.user.sub;
 
-  if (!token) {
-    return res.status(400).json({ error: 'Device token is required' });
+  if (!token || typeof token !== 'string' || token.length > 500) {
+    return res.status(400).json({ error: 'Invalid device token' });
   }
 
   try {

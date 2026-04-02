@@ -48,9 +48,24 @@ const createSession = async (req, res) => {
 /**
  * Allows an Expert to claim an active session
  */
+// UUID v4 format validator
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const claimSession = async (req, res) => {
+  // 🚨 AUTHORIZATION CHECK 🚨
+  // Because we use the Supabase Secret Key (God Mode), we bypass Database RLS.
+  // We MUST explicitly verify that the caller is an Expert, not a Student.
+  if (req.user.is_anonymous) {
+    return res.status(403).json({ error: 'Forbidden: Students cannot claim sessions.' });
+  }
+
   const { sessionId } = req.body;
   const expertId = req.user.sub; // The verified expert
+
+  // Input Validation
+  if (!sessionId || !UUID_REGEX.test(sessionId)) {
+    return res.status(400).json({ error: 'Invalid session ID format' });
+  }
 
   try {
     const { data: session, error } = await supabase

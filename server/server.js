@@ -12,6 +12,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const apiRoutes = require('./src/routes/api.routes');
 
 const app = express();
@@ -20,9 +22,41 @@ const app = express();
 // 1. GLOBAL MIDDLEWARE
 // ==========================================
 
-// Enable Cross-Origin Resource Sharing (CORS) so the Vite frontend (localhost:5173) 
-// can make API requests to this backend without browser security blocks.
-app.use(cors());
+// Helmet automatically sets secure HTTP headers (X-Content-Type-Options, 
+// Strict-Transport-Security, X-Frame-Options, etc.) that protect against 
+// common web attacks like clickjacking, MIME sniffing, and XSS.
+app.use(helmet());
+
+// CORS Lockdown: Only allow requests from our own frontend domains.
+// Without this, ANY website on the internet could make API calls to our backend.
+const allowedOrigins = [
+  'https://knobull.com',
+  'https://www.knobull.com',
+  'http://localhost:5173', // Vite dev server — remove in production if desired
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (server-to-server, health checks, mobile apps)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Blocked by CORS policy'));
+  },
+  credentials: true,
+}));
+
+// Rate Limiting: Prevent abuse by limiting each IP to 100 API requests per 15 minutes.
+// This protects against brute-force attacks, spam session creation, and notification flooding.
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minute window
+  max: 100,                   // Max 100 requests per window per IP
+  standardHeaders: true,      // Return rate limit info in `RateLimit-*` headers
+  legacyHeaders: false,       // Disable the `X-RateLimit-*` headers
+  message: { error: 'Too many requests. Please try again later.' },
+});
+app.use('/api', apiLimiter);
 
 // Parse incoming payloads with JSON payloads automatically to `req.body`.
 app.use(express.json());

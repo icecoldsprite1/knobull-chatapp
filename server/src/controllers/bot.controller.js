@@ -25,9 +25,20 @@ const supabase = createClient(
  * @param {Object} req - Express request object containing `sessionId` and `messageCount`
  * @param {Object} res - Express response object
  */
+// UUID v4 format validator — prevents malformed IDs from hitting the database
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const handleBotCheck = async (req, res) => {
   const { sessionId, messageCount } = req.body;
   const userId = req.user.sub; // Extracted securely by requireAuth middleware
+
+  // Input Validation
+  if (!sessionId || !UUID_REGEX.test(sessionId)) {
+    return res.status(400).json({ error: 'Invalid session ID format' });
+  }
+  if (typeof messageCount !== 'number' || !Number.isInteger(messageCount) || messageCount < 1) {
+    return res.status(400).json({ error: 'Invalid message count' });
+  }
 
   // 1. Notify Human Experts
   // We trigger a background push notification to all online advisors.
