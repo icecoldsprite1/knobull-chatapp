@@ -23,7 +23,8 @@ const createSession = async (req, res) => {
       .single();
 
     if (sessionError) {
-      return res.status(400).json({ error: sessionError.message });
+      console.error('Session creation error:', sessionError);
+      return res.status(400).json({ error: 'Failed to create session. You may already have an active session.' });
     }
 
     // 2. Post the Guide's Welcome Message
@@ -54,13 +55,25 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const claimSession = async (req, res) => {
   // 🚨 AUTHORIZATION CHECK 🚨
   // Because we use the Supabase Secret Key (God Mode), we bypass Database RLS.
-  // We MUST explicitly verify that the caller is an Expert, not a Student.
-  if (req.user.is_anonymous) {
-    return res.status(403).json({ error: 'Forbidden: Students cannot claim sessions.' });
+  // We MUST explicitly verify that the caller is an Expert via the admins table.
+  const expertId = req.user.sub;
+
+  try {
+    const { data: adminRow } = await supabase
+      .from('admins')
+      .select('user_id')
+      .eq('user_id', expertId)
+      .single();
+
+    if (!adminRow) {
+      return res.status(403).json({ error: 'Forbidden: Only authorized experts can claim sessions.' });
+    }
+  } catch (err) {
+    console.error('Admin verification error:', err);
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 
   const { sessionId } = req.body;
-  const expertId = req.user.sub; // The verified expert
 
   // Input Validation
   if (!sessionId || !UUID_REGEX.test(sessionId)) {

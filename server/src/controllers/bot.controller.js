@@ -40,6 +40,26 @@ const handleBotCheck = async (req, res) => {
     return res.status(400).json({ error: 'Invalid message count' });
   }
 
+  // 🚨 OWNERSHIP CHECK 🚨
+  // Verify that the sessionId actually belongs to the authenticated student.
+  // Without this, an attacker could inject bot messages into another student's chat
+  // because the admin client bypasses RLS.
+  try {
+    const { data: session } = await supabase
+      .from('sessions')
+      .select('id')
+      .eq('id', sessionId)
+      .eq('student_id', userId)
+      .single();
+
+    if (!session) {
+      return res.status(403).json({ error: 'Forbidden: Session does not belong to you.' });
+    }
+  } catch (err) {
+    console.error('Session ownership check error:', err);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+
   // 1. Notify Human Experts
   // We trigger a background push notification to all online advisors.
   // We don't await this because push notifications shouldn't block the HTTP response to the student.

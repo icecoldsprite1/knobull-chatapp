@@ -29,11 +29,12 @@ app.use(helmet());
 
 // CORS Lockdown: Only allow requests from our own frontend domains.
 // Without this, ANY website on the internet could make API calls to our backend.
-const allowedOrigins = [
-  'https://knobull.com',
-  'https://www.knobull.com',
-  'http://localhost:5173', // Vite dev server — remove in production if desired
-];
+// Origins are configured via CORS_ORIGINS env var (comma-separated).
+// In production, set: CORS_ORIGINS=https://knobull.com,https://www.knobull.com
+// In development, add: http://localhost:5173
+const allowedOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
+  : ['https://knobull.com', 'https://www.knobull.com'];
 
 app.use(cors({
   origin: (origin, callback) => {

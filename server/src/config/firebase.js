@@ -11,16 +11,16 @@ const path = require('path');
  * 4. Add 'firebase-service-account.json' to your .gitignore!
  */
 // __dirname = server/src/config/, so we go up 2 levels to reach server/
-const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH 
+const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH
   || path.join(__dirname, '..', '..', 'firebase-service-account.json');
 
 try {
   const serviceAccount = require(serviceAccountPath);
-  
+
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
   });
-  
+
   console.log('✅ Firebase Admin SDK initialized');
 } catch (err) {
   console.warn('⚠️  Firebase Admin SDK not initialized:', err.message);
