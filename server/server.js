@@ -64,7 +64,7 @@ const apiLimiter = rateLimit({
 app.use('/api', apiLimiter);
 
 // Parse incoming payloads with JSON payloads automatically to `req.body`.
-app.use(express.json());
+app.use(express.json({ limit: '10kb' }));
 
 // ==========================================
 // 2. ROUTING
