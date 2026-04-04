@@ -74,9 +74,16 @@ export default function App() {
   /**
    * Fired when a student clicks "Student Access" on the Landing Page.
    */
-  const startStudent = async () => {
+  const startStudent = async (captchaToken) => {
     // 1. Secretly log them into Supabase via a temporary anonymous account
-    const { data } = await supabase.auth.signInAnonymously();
+    //    The captchaToken from hCaptcha is required — Supabase will reject without it.
+    const { data, error: authError } = await supabase.auth.signInAnonymously({
+      options: { captchaToken }
+    });
+
+    if (authError) {
+      throw new Error(authError.message);
+    }
     setUser(data.user);
     
     // 2. Ping our Node.js backend to officially register the Chat Session in the DB
