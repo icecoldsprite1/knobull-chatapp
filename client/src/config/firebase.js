@@ -35,7 +35,7 @@ export const requestNotificationPermission = async (vapidKey) => {
 
   try {
     const permission = await Notification.requestPermission();
-    
+
     if (permission !== 'granted') {
       console.log('Notification permission denied.');
       return null;
@@ -44,13 +44,12 @@ export const requestNotificationPermission = async (vapidKey) => {
     // Explicitly register the service worker ourselves so Firebase doesn't 
     // try to auto-register (which fails on React StrictMode double-mount)
     const swRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
-    
+
     // Get the FCM token using our pre-registered service worker
-    const token = await getToken(messaging, { 
+    const token = await getToken(messaging, {
       vapidKey,
-      serviceWorkerRegistration: swRegistration 
+      serviceWorkerRegistration: swRegistration
     });
-    console.log('FCM Device Token:', token);
     return token;
   } catch (err) {
     console.error('Error getting notification token:', err);
