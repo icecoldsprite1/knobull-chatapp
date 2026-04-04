@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { BookOpen, ShieldCheck, Mail, Lock, X } from 'lucide-react';
+import HCaptcha from '@hcaptcha/react-hcaptcha';
 import { supabase } from '../config/supabase';
 
 /**
@@ -16,12 +17,21 @@ export default function LoginForm({ onClose, onSuccess }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  
+  // hCaptcha state
+  const [captchaToken, setCaptchaToken] = useState(null);
+  const captchaRef = useRef(null);
 
   /**
    * Submits credentials to the Supabase Auth server.
    */
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (!captchaToken) {
+      setError("Please complete the security check.");
+      return;
+    }
+    
     setIsLoading(true);
     setError(null);
 
@@ -29,12 +39,16 @@ export default function LoginForm({ onClose, onSuccess }) {
     // This automatically saves a secure JWT into LocalStorage on success.
     const { data, error: authError } = await supabase.auth.signInWithPassword({
       email,
-      password
+      password,
+      options: { captchaToken }
     });
 
     if (authError) {
       setError(authError.message); // e.g., "Invalid login credentials"
       setIsLoading(false);
+      // Reset the captcha so they can try again
+      captchaRef.current?.resetCaptcha();
+      setCaptchaToken(null);
       return;
     }
 
@@ -96,6 +110,16 @@ export default function LoginForm({ onClose, onSuccess }) {
               className="w-full bg-slate-50 border border-slate-200 text-slate-900 pl-10 pr-4 py-2.5 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition-all shadow-sm"
             />
           </div>
+        </div>
+
+        {/* CAPTCHA Widget */}
+        <div className="flex justify-center my-2">
+          <HCaptcha
+            ref={captchaRef}
+            sitekey={import.meta.env.VITE_HCAPTCHA_SITEKEY}
+            onVerify={(token) => setCaptchaToken(token)}
+            onExpire={() => setCaptchaToken(null)}
+          />
         </div>
 
         {/* Submit Button */}
