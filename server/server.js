@@ -18,6 +18,10 @@ const apiRoutes = require('./src/routes/api.routes');
 
 const app = express();
 
+// Trust the first proxy (e.g. Heroku, Render, AWS ALBs) so express-rate-limit 
+// correctly identifies the user's IP instead of the proxy's IP.
+app.set('trust proxy', 1);
+
 // ==========================================
 // 1. GLOBAL MIDDLEWARE
 // ==========================================

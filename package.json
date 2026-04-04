@@ -1,0 +1,10 @@
+{
+  "name": "knobull-chatapp-deploy",
+  "scripts": {
+    "start": "cd server && npm start",
+    "heroku-postbuild": "cd server && npm install"
+  },
+  "engines": {
+    "node": "20.x"
+  }
+}

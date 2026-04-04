@@ -4,27 +4,41 @@ const path = require('path');
 /**
  * Initialize Firebase Admin SDK
  * 
- * To set this up:
- * 1. Go to Firebase Console → Project Settings → Service Accounts
- * 2. Click "Generate New Private Key"
- * 3. Save the JSON file as 'firebase-service-account.json' in the server/ root
- * 4. Add 'firebase-service-account.json' to your .gitignore!
+ * Heroku Deployment Note:
+ * On Heroku, we use the FIREBASE_SERVICE_ACCOUNT_JSON environment variable
+ * to inject the credentials, since we don't commit the JSON file.
  */
-// __dirname = server/src/config/, so we go up 2 levels to reach server/
-const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH
-  || path.join(__dirname, '..', '..', 'firebase-service-account.json');
+let serviceAccount;
 
-try {
-  const serviceAccount = require(serviceAccountPath);
+if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+  // Production / Heroku
+  try {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+  } catch (err) {
+    console.error('⚠️  Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON string.');
+  }
+} else {
+  // Local Development
+  const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH
+    || path.join(__dirname, '..', '..', 'firebase-service-account.json');
+  try {
+    serviceAccount = require(serviceAccountPath);
+  } catch (err) {
+    // Suppress warning if intentionally running locally without push notifications
+  }
+}
 
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
-
-  console.log('✅ Firebase Admin SDK initialized');
-} catch (err) {
-  console.warn('⚠️  Firebase Admin SDK not initialized:', err.message);
-  console.warn('   Push notifications will be disabled until you add firebase-service-account.json');
+if (serviceAccount) {
+  try {
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+    console.log('✅ Firebase Admin SDK initialized');
+  } catch(err) {
+    console.warn('⚠️  Firebase Admin SDK initialization failed:', err.message);
+  }
+} else {
+  console.warn('⚠️  No Firebase credentials found. Push notifications will be disabled.');
 }
 
 module.exports = admin;
