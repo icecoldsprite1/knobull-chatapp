@@ -55,8 +55,20 @@ export default function App() {
             setView('landing');
           }
         } else {
-          // 4. If Expert: We know they are staff, send them directly to Dashboard
-          setView('expert');
+          // 4. If non-anonymous: Verify they are an authorized admin before granting access
+          const { data: adminData } = await supabase
+            .from('admins')
+            .select('user_id')
+            .eq('user_id', authSession.user.id)
+            .single();
+
+          if (adminData) {
+            setView('expert');
+          } else {
+            // Not an admin — revoke the session immediately
+            await supabase.auth.signOut();
+            setView('landing');
+          }
         }
       } else {
         // Nobody is logged in. Show the home page.

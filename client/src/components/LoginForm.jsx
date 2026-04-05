@@ -52,7 +52,26 @@ export default function LoginForm({ onClose, onSuccess }) {
       return;
     }
 
-    // 2. Clear sensitive state and trigger the App router switch
+    // 2. AUTHORIZATION CHECK: Verify user is in the admins table
+    // Authentication (password) ≠ Authorization (permission).
+    // Without this, ANY Supabase user can reach the dashboard.
+    const { data: adminData, error: adminError } = await supabase
+      .from('admins')
+      .select('user_id')
+      .eq('user_id', data.user.id)
+      .single();
+
+    if (adminError || !adminData) {
+      // User authenticated but is NOT an authorized admin — kick them out
+      await supabase.auth.signOut();
+      setError('Access Denied: You are not an authorized administrator.');
+      setIsLoading(false);
+      captchaRef.current?.resetCaptcha();
+      setCaptchaToken(null);
+      return;
+    }
+
+    // 3. Clear sensitive state and trigger the App router switch
     setPassword('');
     setIsLoading(false);
     onSuccess(data.user);
