@@ -17,6 +17,7 @@ import ChatBubble from '../components/ChatBubble';
 export default function ExpertDashboardPage({ user, onLogout }) {
   // --- STATE DEFINITIONS ---
   const [sessionsList, setSessionsList] = useState([]); // List of all active/historical rooms
+  const [isLoadingQueue, setIsLoadingQueue] = useState(true); // Prevents "Queue is empty" flash
   const [activeSession, setActiveSession] = useState(null); // The room currently open in the Chat View
   const [messages, setMessages] = useState([]); // Messages for the active session
   const [input, setInput] = useState(''); // Text input
@@ -80,12 +81,15 @@ export default function ExpertDashboardPage({ user, onLogout }) {
    * Helper to pull the latest session list from Supabase
    */
   const fetchSessions = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('sessions')
       .select('*')
       .order('created_at', { ascending: false });
       
+    if (error) console.error("Error fetching queue:", error);
     if (data) setSessionsList(data);
+    
+    setIsLoadingQueue(false);
   };
 
   // ==========================================
@@ -198,7 +202,12 @@ export default function ExpertDashboardPage({ user, onLogout }) {
           </div>
 
           {/* Session Cards Grid */}
-          {sessionsList.length === 0 ? (
+          {isLoadingQueue ? (
+            <div className="text-center py-20 bg-white rounded-2xl border border-blue-100 shadow-md shadow-blue-900/5">
+              <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-5" />
+              <p className="text-slate-500 font-semibold">Loading queue...</p>
+            </div>
+          ) : sessionsList.length === 0 ? (
             <div className="text-center py-20 bg-white rounded-2xl border border-blue-100 shadow-md shadow-blue-900/5">
               <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-5">
                 <User className="text-blue-400" size={40} />

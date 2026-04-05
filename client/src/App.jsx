@@ -1,167 +1,178 @@
 import React, { useState, useEffect } from 'react';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { supabase } from './config/supabase';
-import { apiService } from './services/api.service';
 
 // Pages
 import LandingPage from './pages/LandingPage';
+import StudentAuthPage from './pages/StudentAuthPage';
 import StudentChatPage from './pages/StudentChatPage';
 import ExpertDashboardPage from './pages/ExpertDashboardPage';
+import AuthCallbackPage from './pages/AuthCallbackPage';
 
 /**
- * App Component - The Core Router & State Manager
+ * App Component - The Core Router & Auth Manager
  * 
- * This component acts as the central brain of the frontend. It is responsible for:
- * 1. Persistent Authentication (Remembering who you are when you refresh the page)
- * 2. View Routing (Deciding whether to show the Landing, Student, or Expert page)
+ * Responsibilities:
+ * 1. Global auth state management (who is logged in?)
+ * 2. Route definitions with protection
+ * 3. Session persistence across page refreshes
  */
 export default function App() {
-  // Global State
-  const [user, setUser] = useState(null); // Holds the Supabase Auth User object
-  const [view, setView] = useState('loading'); // Controls the visible "Page"
-  const [session, setSession] = useState(null); // The active database Chat Session object
+  const [user, setUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const navigate = useNavigate();
 
   // ==========================================
-  // SESSION PERSISTENCE (AUTO-LOGIN)
+  // SESSION PERSISTENCE & AUTH STATE LISTENER
   // ==========================================
-  // Runs once when the browser tab is first opened or refreshed.
   useEffect(() => {
-    const restoreSession = async () => {
-      // 1. Ask Supabase if we have a valid JWT saved in local storage
-      const { data: { session: authSession } } = await supabase.auth.getSession();
+    const initAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
       
-      if (authSession?.user) {
-        // We found a logged-in user! 
-        setUser(authSession.user);
+      if (session?.user) {
+        setUser(session.user);
         
-        // 2. Classify the user
-        // Advisors log in with an email/password. Students log in anonymously.
-        if (authSession.user.is_anonymous) {
-          
-          // 3. If Student: Try to fetch their last active chat box
-          const { data: existingSession } = await supabase
-            .from('sessions')
-            .select('*')
-            .eq('student_id', authSession.user.id)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
-          
-          if (existingSession) {
-             // Successfully restored student's old chat
-            setSession(existingSession);
-            setView('student');
-          } else {
-            // An anonymous user with no active chat. Show them the home page.
-            setView('landing');
-          }
-        } else {
-          // 4. If non-anonymous: Verify they are an authorized admin before granting access
+        // Check admin status
+        if (!session.user.is_anonymous) {
           const { data: adminData } = await supabase
             .from('admins')
             .select('user_id')
-            .eq('user_id', authSession.user.id)
+            .eq('user_id', session.user.id)
             .single();
-
+          
           if (adminData) {
-            setView('expert');
-          } else {
-            // Not an admin — revoke the session immediately
-            await supabase.auth.signOut();
-            setView('landing');
+            setIsAdmin(true);
           }
         }
-      } else {
-        // Nobody is logged in. Show the home page.
-        setView('landing');
       }
+      
+      setAuthLoading(false);
     };
 
-    restoreSession();
+    initAuth();
+
+    // Listen for auth state changes (login, logout, token refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'SIGNED_IN' && session?.user) {
+          setUser(session.user);
+          
+          // Re-check admin status on new sign-in
+          if (!session.user.is_anonymous) {
+            const { data: adminData } = await supabase
+              .from('admins')
+              .select('user_id')
+              .eq('user_id', session.user.id)
+              .single();
+            
+            setIsAdmin(!!adminData);
+          }
+        } else if (event === 'SIGNED_OUT') {
+          setUser(null);
+          setIsAdmin(false);
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
   }, []);
 
   // ==========================================
-  // AUTHENTICATION FLOWS
+  // LOGOUT HANDLER
   // ==========================================
-
-  /**
-   * Fired when a student clicks "Student Access" on the Landing Page.
-   */
-  const startStudent = async (captchaToken) => {
-    // 1. Secretly log them into Supabase via a temporary anonymous account
-    //    The captchaToken from hCaptcha is required — Supabase will reject without it.
-    const { data, error: authError } = await supabase.auth.signInAnonymously({
-      options: { captchaToken }
-    });
-
-    if (authError) {
-      throw new Error(authError.message);
-    }
-    setUser(data.user);
-    
-    // 2. Ping our Node.js backend to officially register the Chat Session in the DB
-    try {
-      const resData = await apiService.createSession();
-      setSession(resData.session);
-      
-      // 3. Switch the UI to the Chat Screen
-      setView('student');
-    } catch (err) {
-      alert("Error: " + err.message);
-    }
-  };
-
-  /**
-   * Fired when an Advisor successfully logs in via the LoginForm modal.
-   */
-  const startExpert = (expertUser) => {
-    setUser(expertUser);
-    setView('expert');
-  };
-
-  /**
-   * Fired when either an Advisor or Student clicks "Sign Out / End Chat".
-   */
   const handleLogout = async () => {
-    // Tell Supabase to invalidate the token on the server and clear LocalStorage
     await supabase.auth.signOut();
-    
-    // Reset all local UI state
     setUser(null);
-    setSession(null);
-    setView('landing');
+    setIsAdmin(false);
+    navigate('/', { replace: true });
   };
 
   // ==========================================
-  // VIEW ROUTER (RENDER LOGIC)
+  // ROUTE GUARDS
   // ==========================================
+  
+  /**
+   * ProtectedStudentRoute - Requires a verified, non-anonymous email user
+   */
+  const ProtectedStudentRoute = ({ children }) => {
+    if (authLoading) return <LoadingSpinner />;
+    
+    // Must be logged in with a verified email
+    if (!user || user.is_anonymous) {
+      return <Navigate to="/login" replace />;
+    }
+    
+    // Must have verified email
+    if (!user.email_confirmed_at) {
+      return <Navigate to="/login" replace />;
+    }
 
-  // Prevent UI flashing by showing a spinner while we check LocalStorage (useEffect)
-  if (view === 'loading') {
-    return (
-      <div className="h-screen flex items-center justify-center bg-slate-50">
-        <div className="text-center">
-          <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-slate-400 text-sm">Loading...</p>
-        </div>
+    return children;
+  };
+
+  /**
+   * ProtectedAdminRoute - Requires admin table membership
+   */
+  const ProtectedAdminRoute = ({ children }) => {
+    if (authLoading) return <LoadingSpinner />;
+    
+    if (!user || !isAdmin) {
+      return <Navigate to="/" replace />;
+    }
+
+    return children;
+  };
+
+  // ==========================================
+  // LOADING STATE
+  // ==========================================
+  if (authLoading) return <LoadingSpinner />;
+
+  // ==========================================
+  // ROUTE DEFINITIONS
+  // ==========================================
+  return (
+    <Routes>
+      {/* Public Routes */}
+      <Route path="/" element={<LandingPage user={user} isAdmin={isAdmin} />} />
+      <Route path="/login" element={
+        user && user.email_confirmed_at && !user.is_anonymous
+          ? <Navigate to="/chat" replace />
+          : <StudentAuthPage />
+      } />
+      <Route path="/auth/callback" element={<AuthCallbackPage />} />
+      
+      {/* Protected Student Route */}
+      <Route path="/chat" element={
+        <ProtectedStudentRoute>
+          <StudentChatPage user={user} onLogout={handleLogout} />
+        </ProtectedStudentRoute>
+      } />
+
+      {/* Protected Admin Route */}
+      <Route path="/dashboard" element={
+        <ProtectedAdminRoute>
+          <ExpertDashboardPage user={user} onLogout={handleLogout} />
+        </ProtectedAdminRoute>
+      } />
+
+      {/* Catch-all: redirect to home */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+/**
+ * Simple full-page loading spinner
+ */
+function LoadingSpinner() {
+  return (
+    <div className="h-screen flex items-center justify-center bg-slate-50">
+      <div className="text-center">
+        <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+        <p className="text-slate-400 text-sm">Loading...</p>
       </div>
-    );
-  }
-
-  // Home Page
-  if (view === 'landing') {
-    return <LandingPage onStartStudent={startStudent} onStartExpert={startExpert} />;
-  }
-
-  // Staff Portal
-  if (view === 'expert') {
-    return <ExpertDashboardPage user={user} onLogout={handleLogout} />;
-  }
-
-  // Student Chat Box
-  if (view === 'student') {
-    return <StudentChatPage user={user} session={session} onLogout={handleLogout} />;
-  }
-
-  // Fallback (Should never be reached)
-  return null;
+    </div>
+  );
 }

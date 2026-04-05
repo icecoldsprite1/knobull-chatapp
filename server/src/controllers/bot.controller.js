@@ -32,6 +32,11 @@ const handleBotCheck = async (req, res) => {
   const { sessionId, messageCount } = req.body;
   const userId = req.user.sub; // Extracted securely by requireAuth middleware
 
+  // 🚨 SECURITY: Block anonymous accounts
+  if (req.user.is_anonymous) {
+    return res.status(403).json({ error: 'Forbidden: Account required.' });
+  }
+
   // Input Validation
   if (!sessionId || !UUID_REGEX.test(sessionId)) {
     return res.status(400).json({ error: 'Invalid session ID format' });

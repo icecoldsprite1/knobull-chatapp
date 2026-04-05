@@ -1,76 +1,133 @@
 import React, { useState, useRef } from 'react';
-import { BookOpen, ShieldCheck } from 'lucide-react';
-import HCaptcha from '@hcaptcha/react-hcaptcha';
+import { useNavigate, Link } from 'react-router-dom';
+import { BookOpen, ShieldCheck, Send, Library } from 'lucide-react';
 import LoginForm from '../components/LoginForm';
 
 /**
  * LandingPage Component
  * 
  * The default route when the application loads.
- * Features a navbar with branding, a blue gradient hero with expert chat info,
- * membership perks, and dual-portal cards for Students and Advisors.
+ * Features a navbar, hero section, guest preview chat, membership info,
+ * and access portals for Students and Advisors.
  * 
- * @param {Function} props.onStartStudent - Triggers anonymous login and creates a session
- * @param {Function} props.onStartExpert - Receives a valid Supabase user object after login
+ * @param {Object} props.user - Current auth user (may be null)
+ * @param {boolean} props.isAdmin - Whether the current user is an admin
  */
-export default function LandingPage({ onStartStudent, onStartExpert }) {
-  // Toggles the visibility of the Expert Login Modal
+export default function LandingPage({ user, isAdmin }) {
+  const navigate = useNavigate();
   const [showLoginForm, setShowLoginForm] = useState(false);
 
-  // hCaptcha state: shows the challenge after clicking "Student Access"
-  const [showCaptcha, setShowCaptcha] = useState(false);
-  const [isStarting, setIsStarting] = useState(false);
-  const captchaRef = useRef(null);
+  // ==========================================
+  // GUEST PREVIEW CHAT (local state only, no database)
+  // ==========================================
+  const PREVIEW_LIMIT = 2;
+  const [previewMessages, setPreviewMessages] = useState([
+    { sender: 'bot', text: "👋 Hi! I'm the Knobull Guide. I can connect you with learning and career experts. What's on your mind?" }
+  ]);
+  const [previewInput, setPreviewInput] = useState('');
+  const [previewCount, setPreviewCount] = useState(0);
+  const [showSignupPrompt, setShowSignupPrompt] = useState(false);
+  const previewBottomRef = useRef(null);
 
-  /**
-   * Called when the student solves the CAPTCHA challenge.
-   * Automatically proceeds with the anonymous sign-in flow.
-   */
-  const handleCaptchaVerify = async (token) => {
-    setIsStarting(true);
-    try {
-      await onStartStudent(token);
-    } catch (err) {
-      captchaRef.current?.resetCaptcha();
-      setIsStarting(false);
+  const handlePreviewSend = (e) => {
+    e.preventDefault();
+    if (!previewInput.trim()) return;
+
+    const userMsg = previewInput.trim();
+    setPreviewInput('');
+
+    // Add user message
+    setPreviewMessages((prev) => [...prev, { sender: 'user', text: userMsg }]);
+    const newCount = previewCount + 1;
+    setPreviewCount(newCount);
+
+    // Bot response after a short delay
+    setTimeout(() => {
+      if (newCount >= PREVIEW_LIMIT) {
+        setPreviewMessages((prev) => [...prev, { 
+          sender: 'bot', 
+          text: "I'd love to connect you with an expert who can help with that! Create a free account to start your 30-day trial. 🎓" 
+        }]);
+        setShowSignupPrompt(true);
+      } else {
+        setPreviewMessages((prev) => [...prev, { 
+          sender: 'bot', 
+          text: "Great question! Our experts specialize in exactly this type of guidance. Send one more message, or create a free account to chat with a real expert!" 
+        }]);
+      }
+      
+      // Auto-scroll
+      setTimeout(() => {
+        previewBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
+    }, 800);
+  };
+
+  // Navigate student based on auth state
+  const handleStudentClick = () => {
+    if (user && !user.is_anonymous && user.email_confirmed_at) {
+      navigate('/chat');
+    } else {
+      navigate('/login');
     }
+  };
+
+  // Navigate admin based on auth state
+  const handleAdvisorSuccess = () => {
+    navigate('/dashboard', { replace: true });
   };
 
   return (
     <div className="min-h-screen flex flex-col bg-white font-sans">
 
-      {/* ===================== TOP NAVBAR (logo only) ===================== */}
-      <nav className="w-full bg-white border-b border-gray-200 px-6 py-3 flex items-center sticky top-0 z-50 shadow-sm">
+      {/* ===================== TOP NAVBAR ===================== */}
+      <nav className="w-full bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between sticky top-0 z-50 shadow-sm">
         <div className="flex items-center gap-2.5">
           <img 
-            src="/icons/knobull.jpg" 
+            src="/icons/knobull2.png" 
             alt="Knobull Logo" 
-            className="w-9 h-9 rounded-full object-cover shadow-sm border border-gray-100"
+            className="w-9 h-9 rounded-full object-cover shadow-sm"
           />
           <span className="text-lg font-bold text-gray-900 tracking-tight">Knobull</span>
         </div>
+        <div className="flex items-center gap-3">
+          {user && !user.is_anonymous && user.email_confirmed_at ? (
+            // Logged-in student — show shortcut
+            <button 
+              onClick={() => navigate(isAdmin ? '/dashboard' : '/chat')}
+              className="text-sm font-semibold text-blue-600 hover:text-blue-700 px-4 py-2 border border-blue-200 hover:bg-blue-50 rounded-xl transition-all"
+            >
+              {isAdmin ? 'Dashboard' : 'My Chat'} →
+            </button>
+          ) : (
+            <button 
+              onClick={() => navigate('/login')}
+              className="text-sm font-semibold text-blue-600 hover:text-blue-700 px-4 py-2 border border-blue-200 hover:bg-blue-50 rounded-xl transition-all"
+            >
+              Sign In
+            </button>
+          )}
+        </div>
       </nav>
 
-      {/* ===================== HERO SECTION (light blue gradient) ===================== */}
+      {/* ===================== HERO SECTION ===================== */}
       <section className="w-full bg-gradient-to-br from-blue-400 via-blue-500 to-blue-600 text-white py-14 md:py-20 relative overflow-hidden">
         <div className="max-w-3xl mx-auto px-6 text-center relative z-10">
-          {/* Main Heading */}
           <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-6 leading-tight drop-shadow-sm">
             Chat with Experts
           </h1>
 
           {/* Mascot Logo */}
-          <div className="flex justify-center mb-6">
-            <div className="w-28 h-28 md:w-36 md:h-36 rounded-full bg-white/10 backdrop-blur-sm border-2 border-white/20 p-1.5 shadow-xl shadow-black/10">
+          <div className="flex justify-center mb-8">
+            <div className="w-32 h-32 md:w-44 md:h-44 rounded-full">
               <img 
-                src="/icons/knobull.jpg" 
+                src="/icons/knobull2.png" 
                 alt="Knobull Mascot" 
                 className="w-full h-full rounded-full object-cover"
               />
             </div>
           </div>
 
-          {/* Sub-copy */}
           <p className="text-lg md:text-xl text-white/90 max-w-xl mx-auto leading-relaxed mb-3">
             We're here to help.
           </p>
@@ -80,7 +137,7 @@ export default function LandingPage({ onStartStudent, onStartExpert }) {
 
           <button
             onClick={() => {
-              document.getElementById('get-started')?.scrollIntoView({ behavior: 'smooth' });
+              document.getElementById('preview-chat')?.scrollIntoView({ behavior: 'smooth' });
             }}
             className="px-8 py-3 bg-white text-blue-600 font-bold rounded-xl shadow-lg hover:bg-gray-50 transition-all duration-300"
           >
@@ -89,133 +146,201 @@ export default function LandingPage({ onStartStudent, onStartExpert }) {
         </div>
       </section>
 
-      {/* ===================== MEMBERSHIP PERKS (visible early) ===================== */}
-      <section className="w-full bg-gray-50 py-10 md:py-14 border-b border-gray-200">
+      {/* ===================== MEMBERSHIP PERKS ===================== */}
+      <section className="w-full bg-white py-10 md:py-14 border-b border-gray-200">
         <div className="max-w-2xl mx-auto px-6">
           <h2 className="text-2xl md:text-3xl font-bold text-gray-900 text-center mb-8 tracking-tight">
             Knobull Membership
           </h2>
 
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-lg shadow-gray-900/5 p-6 md:p-8">
-            {/* Free Trial Highlight */}
-            <div className="mb-6 pb-6 border-b border-gray-100">
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-lg shadow-gray-900/5 p-6 md:p-8 space-y-6">
+            
+            {/* Major Time Savings */}
+            <div>
+              <h3 className="text-base font-bold text-gray-900 mb-1">Major Time Savings</h3>
+              <p className="text-gray-600 text-sm leading-relaxed">
+                Access to a top ranked academic search engine, direct links to research sources, student focused news articles, online courses, career growth coaching, ask learning/career experts questions via chat icon on landing page!
+              </p>
+            </div>
+
+            {/* Learning Career Expert Service Examples */}
+            <div>
+              <h3 className="text-base font-bold text-gray-900 mb-1">Learning Career Expert Service Examples</h3>
+              <p className="text-gray-600 text-sm leading-relaxed">
+                Research guidance, time management, study success, pick major, tough teacher tips, job search success, find a tutor, work/life balance, presentation guidance, most other critical learning/career development support.
+              </p>
+            </div>
+
+            {/* No long waits */}
+            <div>
+              <h3 className="text-base font-bold text-gray-900 mb-1">No long waits</h3>
+              <p className="text-gray-600 text-sm leading-relaxed">
+                Quick response when you need answers on learning/career growth related topics 24/7.
+              </p>
+            </div>
+
+            {/* Learning and Career Experts */}
+            <div>
+              <h3 className="text-base font-bold text-gray-900 mb-1">Learning and Career Experts</h3>
+              <p className="text-gray-600 text-sm leading-relaxed">
+                Chat with experts that have pragmatic knowledge and experience—anytime, anywhere.
+              </p>
+            </div>
+            
+            {/* Start with 30-day free trial */}
+            <div className="pt-6 border-t border-gray-100">
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 text-base">
                   🎉
                 </div>
-                <h3 className="text-lg font-bold text-gray-900">Start Free</h3>
+                <h3 className="text-lg font-bold text-gray-900">Start with 30-day free trial</h3>
               </div>
-              <p className="text-gray-600 text-sm leading-relaxed">
-                Users get <span className="font-semibold text-gray-900">1 month free</span> without membership. No billing info required to get started.
-              </p>
-            </div>
-
-            {/* After Free Period */}
-            <div className="mb-6 pb-6 border-b border-gray-100">
-              <h3 className="text-base font-bold text-gray-900 mb-3">After your free month</h3>
               <p className="text-gray-600 text-sm leading-relaxed mb-4">
-                Access stops after the free period. Choose a paid plan for continued access:
+                Ask a Knobull expert (initially all questions come to President)! Two questions a week during the trial period. 
               </p>
-
-              {/* Plan Tiers */}
-              <div className="grid gap-2.5">
-                <div className="flex items-start gap-3 p-3.5 bg-blue-50/60 rounded-xl border border-blue-100">
-                  <div className="w-7 h-7 rounded-lg bg-blue-100 border border-blue-200 flex items-center justify-center text-blue-600 text-xs font-bold mt-0.5 shrink-0">M</div>
-                  <div>
-                    <p className="font-semibold text-gray-900 text-sm">Monthly</p>
-                    <p className="text-gray-500 text-xs">Month-to-month access, renewal required each month.</p>
-                  </div>
+              
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="p-4 bg-blue-50/60 rounded-xl border border-blue-100">
+                  <p className="font-bold text-gray-900 text-sm mb-1">Standard Package</p>
+                  <p className="text-gray-600 text-xs mb-2">Five questions per week via Venmo.</p>
+                  <p className="font-semibold text-blue-700 text-sm">$30 / month <span className="text-gray-400 font-normal">or</span> $300 / year</p>
                 </div>
-                <div className="flex items-start gap-3 p-3.5 bg-indigo-50/60 rounded-xl border border-indigo-100">
-                  <div className="w-7 h-7 rounded-lg bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-600 text-xs font-bold mt-0.5 shrink-0">Y</div>
-                  <div>
-                    <p className="font-semibold text-gray-900 text-sm">Yearly</p>
-                    <p className="text-gray-500 text-xs">One-year payment for continued access.</p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3 p-3.5 bg-amber-50/60 rounded-xl border border-amber-100">
-                  <div className="w-7 h-7 rounded-lg bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-700 text-xs font-bold mt-0.5 shrink-0">∞</div>
-                  <div>
-                    <p className="font-semibold text-gray-900 text-sm">Unlimited</p>
-                    <p className="text-gray-500 text-xs">One-time purchase, no further renewal required!</p>
-                  </div>
+                <div className="p-4 bg-indigo-50/60 rounded-xl border border-indigo-100">
+                  <p className="font-bold text-gray-900 text-sm mb-1">Unlimited Package</p>
+                  <p className="text-gray-600 text-xs mb-2">Unlimited support package.</p>
+                  <p className="font-semibold text-indigo-700 text-sm">$90 / month <span className="text-gray-400 font-normal">or</span> $900 / year</p>
                 </div>
               </div>
             </div>
 
-            {/* What You Get */}
-            <div>
-              <h3 className="text-base font-bold text-gray-900 mb-2">What You Get</h3>
-              <p className="text-gray-600 text-sm leading-relaxed">
-                Access to academic search, direct links to research sources, student-focused news, online courses, career growth coaching, and direct expert chat for learning and career questions.
-              </p>
-            </div>
           </div>
         </div>
       </section>
 
-      {/* ===================== ACCESS PORTALS (Student + Advisor cards) ===================== */}
-      <section id="get-started" className="w-full bg-white py-12 md:py-16">
+      {/* ===================== GUEST PREVIEW CHAT ===================== */}
+      <section id="preview-chat" className="w-full bg-gray-50 py-10 md:py-14 border-b border-gray-200">
+        <div className="max-w-2xl mx-auto px-6">
+          <h2 className="text-2xl md:text-3xl font-bold text-gray-900 text-center mb-2 tracking-tight">
+            Try It Out
+          </h2>
+          <p className="text-gray-500 text-sm text-center mb-8">
+            Send a message to see how Knobull expert chat works — no account needed.
+          </p>
+
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-lg shadow-gray-900/5 overflow-hidden">
+            {/* Chat Header */}
+            <div className="px-5 py-3.5 bg-blue-700 flex items-center gap-3">
+              <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center border border-white/20">
+                <Library className="text-white" size={16} />
+              </div>
+              <div>
+                <p className="text-white text-sm font-semibold">Knobull Support</p>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
+                  <p className="text-[10px] text-blue-100 uppercase tracking-wider font-semibold">Preview Mode</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div className="h-64 overflow-y-auto p-5 space-y-4 bg-slate-50/50">
+              {previewMessages.map((m, i) => (
+                <div key={i} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[80%] px-4 py-3 text-sm leading-relaxed ${
+                    m.sender === 'user'
+                      ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm'
+                      : 'bg-white border border-slate-200 text-slate-800 rounded-2xl rounded-tl-sm shadow-sm'
+                  }`}>
+                    <p className="whitespace-pre-wrap">{m.text}</p>
+                  </div>
+                </div>
+              ))}
+              <div ref={previewBottomRef} />
+            </div>
+
+            {/* Input or Signup Prompt */}
+            {showSignupPrompt ? (
+              <div className="p-5 bg-white border-t border-gray-100 text-center">
+                <p className="text-slate-600 text-sm mb-3 font-medium">
+                  Create a free account to chat with real experts
+                </p>
+                <button
+                  onClick={() => navigate('/login')}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-8 py-2.5 rounded-xl transition-all text-sm shadow-md shadow-blue-600/20 active:scale-[0.98]"
+                >
+                  Sign Up Free — 30 Day Trial
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handlePreviewSend} className="p-4 bg-white border-t border-gray-100 flex gap-3">
+                <input 
+                  value={previewInput}
+                  onChange={(e) => setPreviewInput(e.target.value)}
+                  className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder:text-slate-400 shadow-sm"
+                  placeholder="Try asking a question..."
+                />
+                <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl transition-all active:scale-95">
+                  <Send size={16} />
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* ===================== ACCESS PORTALS ===================== */}
+      <section id="get-started" className="w-full bg-gray-50 py-12 md:py-16">
         <div className="max-w-2xl mx-auto px-6">
           <h2 className="text-xl md:text-2xl font-bold text-gray-900 text-center mb-8 tracking-tight">
-            Get Started
+            Access Portals
           </h2>
 
           {!showLoginForm ? (
-            <div>
-              <div className="grid md:grid-cols-2 gap-5">
-                {/* Student Access Card */}
-                <button 
-                  onClick={() => setShowCaptcha(true)} 
-                  disabled={isStarting}
-                  className="flex flex-col p-7 bg-gradient-to-br from-blue-600 to-blue-700 border border-blue-500 rounded-2xl shadow-lg shadow-blue-900/10 hover:-translate-y-1 hover:shadow-xl hover:from-blue-700 hover:to-blue-800 transition-all duration-300 text-left group disabled:opacity-50 disabled:hover:translate-y-0"
-                >
-                  <div className="w-12 h-12 bg-blue-500/30 rounded-xl text-white flex items-center justify-center mb-5">
-                    <BookOpen size={26} />
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-2">
-                    {isStarting ? 'Connecting...' : 'Chat With An Expert'}
-                  </h3>
-                  <p className="text-blue-100 text-sm leading-relaxed">
-                    Open a secure session with an academic, career search, research, +more Expert. Start one month free now.
-                  </p>
-                  <p className="text-blue-200/70 text-xs mt-3 font-medium">
-                    Member sign in available after verification
-                  </p>
-                </button>
-
-                {/* Advisor Gateway Card */}
-                <button 
-                  onClick={() => setShowLoginForm(true)} 
-                  className="flex flex-col p-7 bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 rounded-2xl shadow-lg shadow-slate-900/10 hover:-translate-y-1 hover:shadow-xl hover:from-slate-900 hover:to-slate-950 transition-all duration-300 text-left group"
-                >
-                  <div className="w-12 h-12 bg-slate-700/50 rounded-xl text-white flex items-center justify-center mb-5">
-                    <ShieldCheck size={26} />
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-2">Advisor Gateway</h3>
-                  <p className="text-slate-300 text-sm leading-relaxed">
-                    Secure staff login to access the student request queue and dashboard.
-                  </p>
-                </button>
-              </div>
-
-              {/* hCaptcha Challenge — appears below the cards after clicking Student Access */}
-              {showCaptcha && !isStarting && (
-                <div className="mt-6 flex flex-col items-center gap-3 animate-fade-in">
-                  <p className="text-gray-600 text-sm font-medium">Please verify you're human to continue</p>
-                  <HCaptcha
-                    ref={captchaRef}
-                    sitekey={import.meta.env.VITE_HCAPTCHA_SITEKEY}
-                    onVerify={handleCaptchaVerify}
-                  />
+            <div className="grid md:grid-cols-2 gap-5">
+              {/* Student Access Card */}
+              <button 
+                onClick={handleStudentClick}
+                className="flex flex-col p-7 bg-gradient-to-br from-blue-600 to-blue-700 border border-blue-500 rounded-2xl shadow-lg shadow-blue-900/10 hover:-translate-y-1 hover:shadow-xl hover:from-blue-700 hover:to-blue-800 transition-all duration-300 text-left group"
+              >
+                <div className="w-12 h-12 bg-blue-500/30 rounded-xl text-white flex items-center justify-center mb-5">
+                  <BookOpen size={26} />
                 </div>
-              )}
+                <h3 className="text-xl font-bold text-white mb-2">
+                  Chat With An Expert
+                </h3>
+                <p className="text-blue-100 text-sm leading-relaxed">
+                  Open a secure session with an academic, career search, research, +more Expert. Start one month free now.
+                </p>
+                <p className="text-blue-200/70 text-xs mt-3 font-medium">
+                  Free account required • 30-day trial
+                </p>
+              </button>
+
+              {/* Advisor Gateway Card */}
+              <button 
+                onClick={() => {
+                  if (isAdmin) {
+                    navigate('/dashboard');
+                  } else {
+                    setShowLoginForm(true);
+                  }
+                }} 
+                className="flex flex-col p-7 bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 rounded-2xl shadow-lg shadow-slate-900/10 hover:-translate-y-1 hover:shadow-xl hover:from-slate-900 hover:to-slate-950 transition-all duration-300 text-left group"
+              >
+                <div className="w-12 h-12 bg-slate-700/50 rounded-xl text-white flex items-center justify-center mb-5">
+                  <ShieldCheck size={26} />
+                </div>
+                <h3 className="text-xl font-bold text-white mb-2">Advisor Gateway</h3>
+                <p className="text-slate-300 text-sm leading-relaxed">
+                  Secure staff login to access the student request queue and dashboard.
+                </p>
+              </button>
             </div>
           ) : (
             <div className="w-full flex justify-center">
               <LoginForm 
                 onClose={() => setShowLoginForm(false)} 
-                onSuccess={onStartExpert} 
+                onSuccess={handleAdvisorSuccess} 
               />
             </div>
           )}
