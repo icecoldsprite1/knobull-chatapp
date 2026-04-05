@@ -81,15 +81,19 @@ export default function ExpertDashboardPage({ user, onLogout }) {
    * Helper to pull the latest session list from Supabase
    */
   const fetchSessions = async () => {
-    const { data, error } = await supabase
-      .from('sessions')
-      .select('*')
-      .order('created_at', { ascending: false });
-      
-    if (error) console.error("Error fetching queue:", error);
-    if (data) setSessionsList(data);
-    
-    setIsLoadingQueue(false);
+    try {
+      const { data, error } = await supabase
+        .from('sessions')
+        .select('*')
+        .order('created_at', { ascending: false });
+        
+      if (error) console.error("Error fetching queue:", error);
+      if (data) setSessionsList(data);
+    } catch (err) {
+      console.error("Network error fetching queue:", err);
+    } finally {
+      setIsLoadingQueue(false);
+    }
   };
 
   // ==========================================
