@@ -14,6 +14,12 @@ const createSession = async (req, res) => {
   // Use the verified user ID from the JWT token, NOT the request body
   const userId = req.user.sub; 
 
+  // 🚨 SECURITY: Block anonymous accounts from creating sessions
+  // Only verified, non-anonymous email users should reach this point
+  if (req.user.is_anonymous) {
+    return res.status(403).json({ error: 'Forbidden: Account required. Anonymous users cannot create sessions.' });
+  }
+
   try {
     // 1. Create the Session Row for the student
     const { data: session, error: sessionError } = await supabase
@@ -23,6 +29,20 @@ const createSession = async (req, res) => {
       .single();
 
     if (sessionError) {
+      if (sessionError.code === '23505') {
+        // A session already exists for this student! (Likely due to a React StrictMode double-fire)
+        // Instead of failing, just fetch and return their existing session gracefully.
+        const { data: existingSession } = await supabase
+          .from('sessions')
+          .select('*')
+          .eq('student_id', userId)
+          .single();
+          
+        if (existingSession) {
+          return res.json({ session: existingSession });
+        }
+      }
+      
       console.error('Session creation error:', sessionError);
       return res.status(400).json({ error: 'Failed to create session. You may already have an active session.' });
     }

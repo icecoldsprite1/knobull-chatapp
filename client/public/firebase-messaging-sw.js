@@ -1,3 +1,5 @@
+/* global importScripts, firebase, clients */
+
 /**
  * Firebase Cloud Messaging (FCM) Service Worker
  * 
