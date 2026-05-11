@@ -38,7 +38,7 @@ export default function AuthCallbackPage() {
           setErrorMsg('Verification link may have expired. Please try signing up again.');
           setStatus('error');
         }
-      } catch (err) {
+      } catch {
         setErrorMsg('An unexpected error occurred.');
         setStatus('error');
       }

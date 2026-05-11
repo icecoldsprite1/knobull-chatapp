@@ -23,50 +23,60 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const navigate = useNavigate();
 
+  const checkAdminStatus = async (userId) => {
+    const { data, error } = await supabase
+      .from('admins')
+      .select('user_id')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Admin status check failed:', error);
+      return false;
+    }
+
+    return !!data;
+  };
+
   // ==========================================
   // SESSION PERSISTENCE & AUTH STATE LISTENER
   // ==========================================
   useEffect(() => {
     const initAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session?.user) {
-        setUser(session.user);
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+
+        if (error) {
+          console.error('Session restore failed:', error);
+          return;
+        }
         
-        // Check admin status
-        if (!session.user.is_anonymous) {
-          const { data: adminData } = await supabase
-            .from('admins')
-            .select('user_id')
-            .eq('user_id', session.user.id)
-            .single();
+        if (session?.user) {
+          setUser(session.user);
           
-          if (adminData) {
-            setIsAdmin(true);
+          // Check admin status
+          if (!session.user.is_anonymous) {
+            setIsAdmin(await checkAdminStatus(session.user.id));
           }
         }
+      } finally {
+        setAuthLoading(false);
       }
-      
-      setAuthLoading(false);
     };
 
     initAuth();
 
     // Listen for auth state changes (login, logout, token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
         if (event === 'SIGNED_IN' && session?.user) {
           setUser(session.user);
           
           // Re-check admin status on new sign-in
           if (!session.user.is_anonymous) {
-            const { data: adminData } = await supabase
-              .from('admins')
-              .select('user_id')
-              .eq('user_id', session.user.id)
-              .single();
-            
-            setIsAdmin(!!adminData);
+            setTimeout(async () => {
+              setIsAdmin(await checkAdminStatus(session.user.id));
+            }, 0);
           }
         } else if (event === 'SIGNED_OUT') {
           setUser(null);

@@ -12,11 +12,12 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const app = initializeApp(firebaseConfig);
+const hasFirebaseConfig = Object.values(firebaseConfig).every(Boolean);
+const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : null;
 
 // Get the messaging instance (only works in browsers that support it)
 let messaging = null;
-if ('Notification' in window && 'serviceWorker' in navigator) {
+if (app && 'Notification' in window && 'serviceWorker' in navigator) {
   messaging = getMessaging(app);
 }
 

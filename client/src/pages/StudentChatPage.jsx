@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Library, LogOut } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { apiService } from '../services/api.service';
 import ChatBubble from '../components/ChatBubble';
@@ -16,7 +15,6 @@ import ChatBubble from '../components/ChatBubble';
  * @param {Function} props.onLogout - Allows the student to manually end the session
  */
 export default function StudentChatPage({ user, onLogout }) {
-  const navigate = useNavigate();
   const [session, setSession] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -24,6 +22,15 @@ export default function StudentChatPage({ user, onLogout }) {
   const [error, setError] = useState(null);
   const bottomRef = useRef(null);
   const isInitializing = useRef(false);
+
+  const withTimeout = (promise, message) => {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(message)), 10000);
+    });
+
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+  };
 
   // ==========================================
   // SESSION INITIALIZATION
@@ -35,13 +42,20 @@ export default function StudentChatPage({ user, onLogout }) {
       isInitializing.current = true;
       try {
         // 1. Check for an existing active session
-        const { data: existingSession } = await supabase
-          .from('sessions')
-          .select('*')
-          .eq('student_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single();
+        const { data: existingSession, error: existingSessionError } = await withTimeout(
+          supabase
+            .from('sessions')
+            .select('*')
+            .eq('student_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          'Timed out while checking for an existing chat session.'
+        );
+
+        if (existingSessionError) {
+          throw existingSessionError;
+        }
 
         if (existingSession) {
           setSession(existingSession);
@@ -50,12 +64,15 @@ export default function StudentChatPage({ user, onLogout }) {
         }
 
         // 2. No existing session — create a new one via the backend
-        const resData = await apiService.createSession();
+        const resData = await withTimeout(
+          apiService.createSession(),
+          'Timed out while creating a chat session. Make sure the backend is running.'
+        );
         setSession(resData.session);
         setLoading(false);
       } catch (err) {
         console.error('Session init error:', err);
-        setError('Failed to start chat session. Please try again.');
+        setError(err.message || 'Failed to start chat session. Please try again.');
         setLoading(false);
       }
     };
