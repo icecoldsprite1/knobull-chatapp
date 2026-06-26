@@ -2,6 +2,42 @@ import React, { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { BookOpen, ShieldCheck, Send, Library } from 'lucide-react';
 import LoginForm from '../components/LoginForm';
+import PayPalSubscriptionButton from '../components/PayPalSubscriptionButton';
+
+const MEMBERSHIP_PLANS = [
+  {
+    key: 'standard_monthly',
+    tier: 'standard',
+    title: 'Standard Package',
+    description: 'Five questions per week.',
+    price: '$30 / month',
+    paypalPlanId: import.meta.env.VITE_PAYPAL_STANDARD_MONTHLY_PLAN_ID,
+  },
+  {
+    key: 'standard_yearly',
+    tier: 'standard',
+    title: 'Standard Package',
+    description: 'Five questions per week.',
+    price: '$300 / year',
+    paypalPlanId: import.meta.env.VITE_PAYPAL_STANDARD_YEARLY_PLAN_ID,
+  },
+  {
+    key: 'unlimited_monthly',
+    tier: 'unlimited',
+    title: 'Unlimited Package',
+    description: 'Unlimited support package.',
+    price: '$90 / month',
+    paypalPlanId: import.meta.env.VITE_PAYPAL_UNLIMITED_MONTHLY_PLAN_ID,
+  },
+  {
+    key: 'unlimited_yearly',
+    tier: 'unlimited',
+    title: 'Unlimited Package',
+    description: 'Unlimited support package.',
+    price: '$900 / year',
+    paypalPlanId: import.meta.env.VITE_PAYPAL_UNLIMITED_YEARLY_PLAN_ID,
+  },
+];
 
 /**
  * LandingPage Component
@@ -76,6 +112,8 @@ export default function LandingPage({ user, isAdmin }) {
   const handleAdvisorSuccess = () => {
     navigate('/dashboard', { replace: true });
   };
+
+  const isVerifiedStudent = user && !user.is_anonymous && user.email_confirmed_at && !isAdmin;
 
   return (
     <div className="min-h-screen flex flex-col bg-white font-sans">
@@ -200,16 +238,29 @@ export default function LandingPage({ user, isAdmin }) {
               </p>
               
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="p-4 bg-blue-50/60 rounded-xl border border-blue-100">
-                  <p className="font-bold text-gray-900 text-sm mb-1">Standard Package</p>
-                  <p className="text-gray-600 text-xs mb-2">Five questions per week via Venmo.</p>
-                  <p className="font-semibold text-blue-700 text-sm">$30 / month <span className="text-gray-400 font-normal">or</span> $300 / year</p>
-                </div>
-                <div className="p-4 bg-indigo-50/60 rounded-xl border border-indigo-100">
-                  <p className="font-bold text-gray-900 text-sm mb-1">Unlimited Package</p>
-                  <p className="text-gray-600 text-xs mb-2">Unlimited support package.</p>
-                  <p className="font-semibold text-indigo-700 text-sm">$90 / month <span className="text-gray-400 font-normal">or</span> $900 / year</p>
-                </div>
+                {MEMBERSHIP_PLANS.map((plan) => (
+                  <div
+                    key={plan.key}
+                    className={`p-4 rounded-xl border ${
+                      plan.tier === 'standard'
+                        ? 'bg-blue-50/60 border-blue-100'
+                        : 'bg-indigo-50/60 border-indigo-100'
+                    }`}
+                  >
+                    <p className="font-bold text-gray-900 text-sm mb-1">{plan.title}</p>
+                    <p className="text-gray-600 text-xs mb-2">{plan.description}</p>
+                    <p className={`font-semibold text-sm mb-3 ${
+                      plan.tier === 'standard' ? 'text-blue-700' : 'text-indigo-700'
+                    }`}>
+                      {plan.price}
+                    </p>
+                    <PayPalSubscriptionButton
+                      plan={plan}
+                      disabled={!isVerifiedStudent}
+                      onRequireLogin={() => navigate('/login')}
+                    />
+                  </div>
+                ))}
               </div>
             </div>
 

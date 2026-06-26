@@ -91,5 +91,16 @@ export const apiService = {
       method: 'POST',
       body: JSON.stringify({ token })
     });
+  },
+
+  /**
+   * Called after PayPal approves a subscription.
+   * Records the subscription against the authenticated Supabase user.
+   */
+  recordSubscription: async ({ planKey, paypalSubscriptionId }) => {
+    return fetchWithAuth('/record-subscription', {
+      method: 'POST',
+      body: JSON.stringify({ planKey, paypalSubscriptionId })
+    });
   }
 };
