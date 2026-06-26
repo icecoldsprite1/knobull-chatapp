@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { BookOpen, ShieldCheck, Send, Library } from 'lucide-react';
+import { BookOpen, ShieldCheck, Send, Library, LogOut } from 'lucide-react';
 import LoginForm from '../components/LoginForm';
 import PayPalSubscriptionButton from '../components/PayPalSubscriptionButton';
 import { supabase } from '../config/supabase';
@@ -116,6 +116,11 @@ export default function LandingPage({ user, isAdmin }) {
     navigate('/dashboard', { replace: true });
   };
 
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    navigate('/', { replace: true });
+  };
+
   const isVerifiedStudent = user && !user.is_anonymous && user.email_confirmed_at && !isAdmin;
 
   useEffect(() => {
@@ -173,12 +178,20 @@ export default function LandingPage({ user, isAdmin }) {
         <div className="flex items-center gap-3">
           {user && !user.is_anonymous && user.email_confirmed_at ? (
             // Logged-in student — show shortcut
-            <button 
-              onClick={() => navigate(isAdmin ? '/dashboard' : '/chat')}
-              className="text-sm font-semibold text-blue-600 hover:text-blue-700 px-4 py-2 border border-blue-200 hover:bg-blue-50 rounded-xl transition-all"
-            >
-              {isAdmin ? 'Dashboard' : 'My Chat'} →
-            </button>
+            <>
+              <button 
+                onClick={() => navigate(isAdmin ? '/dashboard' : '/chat')}
+                className="text-sm font-semibold text-blue-600 hover:text-blue-700 px-4 py-2 border border-blue-200 hover:bg-blue-50 rounded-xl transition-all"
+              >
+                {isAdmin ? 'Dashboard' : 'My Chat'} →
+              </button>
+              <button
+                onClick={handleSignOut}
+                className="flex items-center gap-1.5 text-sm font-semibold text-slate-600 hover:text-slate-900 px-4 py-2 border border-slate-200 hover:bg-slate-50 rounded-xl transition-all"
+              >
+                <LogOut size={15} /> Sign Out
+              </button>
+            </>
           ) : (
             <button 
               onClick={() => navigate('/login')}
