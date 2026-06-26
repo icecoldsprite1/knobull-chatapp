@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Library, LogOut } from 'lucide-react';
+import { Send, Library, LogOut, Home } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { apiService } from '../services/api.service';
 import ChatBubble from '../components/ChatBubble';
@@ -197,14 +198,22 @@ export default function StudentChatPage({ user, onLogout }) {
               </div>
             </div>
           </div>
-          {onLogout && (
-            <button 
-              onClick={onLogout} 
+          <div className="flex items-center gap-2">
+            <Link
+              to="/"
               className="flex items-center gap-1.5 text-xs font-semibold text-blue-50 hover:text-white px-3 py-1.5 border border-blue-400/30 hover:bg-blue-600 rounded-lg transition-all"
             >
-              <LogOut size={14} /> Sign Out
-            </button>
-          )}
+              <Home size={14} /> Home
+            </Link>
+            {onLogout && (
+              <button 
+                onClick={onLogout} 
+                className="flex items-center gap-1.5 text-xs font-semibold text-blue-50 hover:text-white px-3 py-1.5 border border-blue-400/30 hover:bg-blue-600 rounded-lg transition-all"
+              >
+                <LogOut size={14} /> Sign Out
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Messages */}
