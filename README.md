@@ -134,6 +134,11 @@ Because Supabase stores auth tokens in `localStorage`, you **must** use two sepa
 | `VITE_SUPABASE_URL` | Your Supabase project URL |
 | `VITE_SUPABASE_ANON_KEY` | Public (anon) key — safe for the browser |
 | `VITE_API_URL` | Express server URL (e.g., `http://localhost:3000/api`) |
+| `VITE_PAYPAL_CLIENT_ID` | PayPal sandbox/live client ID for rendering subscription buttons |
+| `VITE_PAYPAL_STANDARD_MONTHLY_PLAN_ID` | PayPal subscription plan ID for Standard monthly |
+| `VITE_PAYPAL_STANDARD_YEARLY_PLAN_ID` | PayPal subscription plan ID for Standard yearly |
+| `VITE_PAYPAL_UNLIMITED_MONTHLY_PLAN_ID` | PayPal subscription plan ID for Unlimited monthly |
+| `VITE_PAYPAL_UNLIMITED_YEARLY_PLAN_ID` | PayPal subscription plan ID for Unlimited yearly |
 
 ### `server/.env`
 | Variable | Description |
@@ -141,3 +146,7 @@ Because Supabase stores auth tokens in `localStorage`, you **must** use two sepa
 | `PORT` | Server port (default: 3000) |
 | `SUPABASE_URL` | Your Supabase project URL |
 | `SUPABASE_SECRET_KEY` | Service Role (secret) key — **never expose publicly** |
+| `PAYPAL_STANDARD_MONTHLY_PLAN_ID` | PayPal subscription plan ID for Standard monthly |
+| `PAYPAL_STANDARD_YEARLY_PLAN_ID` | PayPal subscription plan ID for Standard yearly |
+| `PAYPAL_UNLIMITED_MONTHLY_PLAN_ID` | PayPal subscription plan ID for Unlimited monthly |
+| `PAYPAL_UNLIMITED_YEARLY_PLAN_ID` | PayPal subscription plan ID for Unlimited yearly |

@@ -12,6 +12,7 @@ const router = express.Router();
 const { createSession, claimSession } = require('../controllers/session.controller');
 const { handleBotCheck } = require('../controllers/bot.controller');
 const { registerDevice } = require('../controllers/notification.controller');
+const { recordSubscription } = require('../controllers/payment.controller');
 
 // Import security middleware
 const { requireAuth } = require('../middlewares/auth.middleware');
@@ -54,5 +55,11 @@ router.post('/bot-check', handleBotCheck);
  * Caller: notification.service.js
  */
 router.post('/register-device', registerDevice);
+
+/**
+ * Records a PayPal subscription approval for the authenticated student.
+ * Caller: PayPalSubscriptionButton.jsx
+ */
+router.post('/record-subscription', recordSubscription);
 
 module.exports = router;

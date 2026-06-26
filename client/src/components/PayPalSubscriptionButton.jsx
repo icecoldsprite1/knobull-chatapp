@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { apiService } from '../services/api.service';
 
 const PAYPAL_CLIENT_ID = import.meta.env.VITE_PAYPAL_CLIENT_ID;
@@ -34,6 +35,7 @@ const loadPayPalSdk = () => {
 };
 
 export default function PayPalSubscriptionButton({ plan, disabled, onRequireLogin }) {
+  const navigate = useNavigate();
   const buttonRef = useRef(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -70,7 +72,10 @@ export default function PayPalSubscriptionButton({ plan, disabled, onRequireLogi
               planKey: plan.key,
               paypalSubscriptionId: data.subscriptionID,
             });
-            setStatus('Subscription recorded. You can continue to chat.');
+            navigate('/subscription/confirmed', {
+              replace: true,
+              state: { planKey: plan.key },
+            });
           },
           onError: (err) => {
             console.error('PayPal subscription error:', err);
@@ -93,7 +98,7 @@ export default function PayPalSubscriptionButton({ plan, disabled, onRequireLogi
       isCancelled = true;
       buttons?.close?.();
     };
-  }, [disabled, plan]);
+  }, [disabled, navigate, plan]);
 
   if (disabled) {
     return (

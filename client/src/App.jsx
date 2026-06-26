@@ -8,6 +8,7 @@ import StudentAuthPage from './pages/StudentAuthPage';
 import StudentChatPage from './pages/StudentChatPage';
 import ExpertDashboardPage from './pages/ExpertDashboardPage';
 import AuthCallbackPage from './pages/AuthCallbackPage';
+import SubscriptionConfirmationPage from './pages/SubscriptionConfirmationPage';
 
 /**
  * App Component - The Core Router & Auth Manager
@@ -152,6 +153,11 @@ export default function App() {
           : <StudentAuthPage />
       } />
       <Route path="/auth/callback" element={<AuthCallbackPage />} />
+      <Route path="/subscription/confirmed" element={
+        <ProtectedStudentRoute>
+          <SubscriptionConfirmationPage />
+        </ProtectedStudentRoute>
+      } />
       
       {/* Protected Student Route */}
       <Route path="/chat" element={

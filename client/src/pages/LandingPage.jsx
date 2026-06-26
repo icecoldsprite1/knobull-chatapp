@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { BookOpen, ShieldCheck, Send, Library } from 'lucide-react';
 import LoginForm from '../components/LoginForm';
 import PayPalSubscriptionButton from '../components/PayPalSubscriptionButton';
+import { supabase } from '../config/supabase';
 
 const MEMBERSHIP_PLANS = [
   {
@@ -63,6 +64,8 @@ export default function LandingPage({ user, isAdmin }) {
   const [previewInput, setPreviewInput] = useState('');
   const [previewCount, setPreviewCount] = useState(0);
   const [showSignupPrompt, setShowSignupPrompt] = useState(false);
+  const [membership, setMembership] = useState(null);
+  const [membershipLoading, setMembershipLoading] = useState(false);
   const previewBottomRef = useRef(null);
 
   const handlePreviewSend = (e) => {
@@ -114,6 +117,45 @@ export default function LandingPage({ user, isAdmin }) {
   };
 
   const isVerifiedStudent = user && !user.is_anonymous && user.email_confirmed_at && !isAdmin;
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const fetchMembership = async () => {
+      if (!isVerifiedStudent) {
+        setMembership(null);
+        setMembershipLoading(false);
+        return;
+      }
+
+      setMembershipLoading(true);
+      const { data, error } = await supabase
+        .from('memberships')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!isCancelled) {
+        if (error) {
+          console.error('Membership lookup failed:', error);
+          setMembership(null);
+        } else {
+          setMembership(data);
+        }
+        setMembershipLoading(false);
+      }
+    };
+
+    fetchMembership();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isVerifiedStudent, user?.id]);
+
+  const activePlanLabel = membership
+    ? MEMBERSHIP_PLANS.find((plan) => plan.key === membership.plan_key)?.price
+    : null;
 
   return (
     <div className="min-h-screen flex flex-col bg-white font-sans">
@@ -237,31 +279,41 @@ export default function LandingPage({ user, isAdmin }) {
                 Ask a Knobull expert (initially all questions come to President)! Two questions a week during the trial period. 
               </p>
               
-              <div className="grid gap-3 sm:grid-cols-2">
-                {MEMBERSHIP_PLANS.map((plan) => (
-                  <div
-                    key={plan.key}
-                    className={`p-4 rounded-xl border ${
-                      plan.tier === 'standard'
-                        ? 'bg-blue-50/60 border-blue-100'
-                        : 'bg-indigo-50/60 border-indigo-100'
-                    }`}
-                  >
-                    <p className="font-bold text-gray-900 text-sm mb-1">{plan.title}</p>
-                    <p className="text-gray-600 text-xs mb-2">{plan.description}</p>
-                    <p className={`font-semibold text-sm mb-3 ${
-                      plan.tier === 'standard' ? 'text-blue-700' : 'text-indigo-700'
-                    }`}>
-                      {plan.price}
-                    </p>
-                    <PayPalSubscriptionButton
-                      plan={plan}
-                      disabled={!isVerifiedStudent}
-                      onRequireLogin={() => navigate('/login')}
-                    />
-                  </div>
-                ))}
-              </div>
+              {membership ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                  <p className="text-sm font-bold text-emerald-900">Membership active</p>
+                  <p className="mt-1 text-xs leading-relaxed text-emerald-800">
+                    Your current plan is {membership.tier} {membership.billing_interval}
+                    {activePlanLabel ? ` (${activePlanLabel})` : ''}. Plan changes and cancellations are handled manually for now.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {MEMBERSHIP_PLANS.map((plan) => (
+                    <div
+                      key={plan.key}
+                      className={`p-4 rounded-xl border ${
+                        plan.tier === 'standard'
+                          ? 'bg-blue-50/60 border-blue-100'
+                          : 'bg-indigo-50/60 border-indigo-100'
+                      }`}
+                    >
+                      <p className="font-bold text-gray-900 text-sm mb-1">{plan.title}</p>
+                      <p className="text-gray-600 text-xs mb-2">{plan.description}</p>
+                      <p className={`font-semibold text-sm mb-3 ${
+                        plan.tier === 'standard' ? 'text-blue-700' : 'text-indigo-700'
+                      }`}>
+                        {plan.price}
+                      </p>
+                      <PayPalSubscriptionButton
+                        plan={plan}
+                        disabled={!isVerifiedStudent || membershipLoading}
+                        onRequireLogin={() => navigate('/login')}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
           </div>
