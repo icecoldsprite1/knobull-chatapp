@@ -4,6 +4,7 @@ import { BookOpen, ShieldCheck, Send, Library, LogOut } from 'lucide-react';
 import LoginForm from '../components/LoginForm';
 import PayPalSubscriptionButton from '../components/PayPalSubscriptionButton';
 import { supabase } from '../config/supabase';
+import { apiService } from '../services/api.service';
 
 const MEMBERSHIP_PLANS = [
   {
@@ -66,6 +67,8 @@ export default function LandingPage({ user, isAdmin }) {
   const [showSignupPrompt, setShowSignupPrompt] = useState(false);
   const [membership, setMembership] = useState(null);
   const [membershipLoading, setMembershipLoading] = useState(false);
+  const [billingAction, setBillingAction] = useState('');
+  const [billingError, setBillingError] = useState('');
   const previewBottomRef = useRef(null);
 
   const handlePreviewSend = (e) => {
@@ -161,6 +164,45 @@ export default function LandingPage({ user, isAdmin }) {
   const activePlanLabel = membership
     ? MEMBERSHIP_PLANS.find((plan) => plan.key === membership.plan_key)?.price
     : null;
+  const hasActiveMembership = membership && membership.status !== 'cancelled';
+  const availablePlanChanges = hasActiveMembership
+    ? MEMBERSHIP_PLANS.filter((plan) => plan.key !== membership.plan_key)
+    : [];
+
+  const handlePlanChange = async (planKey) => {
+    setBillingError('');
+    setBillingAction(planKey);
+
+    try {
+      const data = await apiService.changeSubscriptionPlan({ planKey });
+      setMembership(data.membership);
+
+      if (data.approvalUrl) {
+        window.location.href = data.approvalUrl;
+      }
+    } catch (err) {
+      setBillingError(err.message || 'Unable to change subscription plan.');
+    } finally {
+      setBillingAction('');
+    }
+  };
+
+  const handleCancelSubscription = async () => {
+    const confirmed = window.confirm('Cancel your current PayPal subscription?');
+    if (!confirmed) return;
+
+    setBillingError('');
+    setBillingAction('cancel');
+
+    try {
+      const data = await apiService.cancelSubscription();
+      setMembership(data.membership);
+    } catch (err) {
+      setBillingError(err.message || 'Unable to cancel subscription.');
+    } finally {
+      setBillingAction('');
+    }
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-white font-sans">
@@ -292,13 +334,44 @@ export default function LandingPage({ user, isAdmin }) {
                 Ask a Knobull expert (initially all questions come to President)! Two questions a week during the trial period. 
               </p>
               
-              {membership ? (
+              {hasActiveMembership ? (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                   <p className="text-sm font-bold text-emerald-900">Membership active</p>
                   <p className="mt-1 text-xs leading-relaxed text-emerald-800">
                     Your current plan is {membership.tier} {membership.billing_interval}
-                    {activePlanLabel ? ` (${activePlanLabel})` : ''}. Plan changes and cancellations are handled manually for now.
+                    {activePlanLabel ? ` (${activePlanLabel})` : ''}.
                   </p>
+                  {billingError && (
+                    <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                      {billingError}
+                    </p>
+                  )}
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                    {availablePlanChanges.map((plan) => (
+                      <button
+                        key={plan.key}
+                        type="button"
+                        onClick={() => handlePlanChange(plan.key)}
+                        disabled={!!billingAction}
+                        className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-left text-xs font-semibold text-emerald-900 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {billingAction === plan.key ? 'Updating...' : `Switch to ${plan.price}`}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCancelSubscription}
+                    disabled={!!billingAction}
+                    className="mt-3 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {billingAction === 'cancel' ? 'Cancelling...' : 'Cancel Subscription'}
+                  </button>
+                  {membership.status === 'change_pending' && (
+                    <p className="mt-3 text-xs leading-relaxed text-emerald-800">
+                      Your plan change is pending PayPal approval.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2">

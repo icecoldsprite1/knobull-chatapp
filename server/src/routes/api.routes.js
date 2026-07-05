@@ -12,7 +12,11 @@ const router = express.Router();
 const { createSession, claimSession } = require('../controllers/session.controller');
 const { handleBotCheck } = require('../controllers/bot.controller');
 const { registerDevice } = require('../controllers/notification.controller');
-const { recordSubscription } = require('../controllers/payment.controller');
+const {
+  recordSubscription,
+  cancelSubscription,
+  changeSubscriptionPlan,
+} = require('../controllers/payment.controller');
 
 // Import security middleware
 const { requireAuth } = require('../middlewares/auth.middleware');
@@ -61,5 +65,17 @@ router.post('/register-device', registerDevice);
  * Caller: PayPalSubscriptionButton.jsx
  */
 router.post('/record-subscription', recordSubscription);
+
+/**
+ * Cancels the authenticated student's active PayPal subscription.
+ * Caller: LandingPage.jsx billing controls
+ */
+router.post('/cancel-subscription', cancelSubscription);
+
+/**
+ * Revises the authenticated student's existing PayPal subscription to another plan.
+ * Caller: LandingPage.jsx billing controls
+ */
+router.post('/change-subscription-plan', changeSubscriptionPlan);
 
 module.exports = router;

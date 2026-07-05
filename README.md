@@ -146,6 +146,9 @@ Because Supabase stores auth tokens in `localStorage`, you **must** use two sepa
 | `PORT` | Server port (default: 3000) |
 | `SUPABASE_URL` | Your Supabase project URL |
 | `SUPABASE_SECRET_KEY` | Service Role (secret) key — **never expose publicly** |
+| `PAYPAL_ENV` | PayPal environment (`sandbox` or `live`) |
+| `PAYPAL_CLIENT_ID` | PayPal client ID for backend subscription management |
+| `PAYPAL_CLIENT_SECRET` | PayPal client secret — **never expose publicly** |
 | `PAYPAL_STANDARD_MONTHLY_PLAN_ID` | PayPal subscription plan ID for Standard monthly |
 | `PAYPAL_STANDARD_YEARLY_PLAN_ID` | PayPal subscription plan ID for Standard yearly |
 | `PAYPAL_UNLIMITED_MONTHLY_PLAN_ID` | PayPal subscription plan ID for Unlimited monthly |

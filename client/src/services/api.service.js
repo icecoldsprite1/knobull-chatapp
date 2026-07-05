@@ -102,5 +102,22 @@ export const apiService = {
       method: 'POST',
       body: JSON.stringify({ planKey, paypalSubscriptionId })
     });
+  },
+
+  /**
+   * Cancels the authenticated student's active PayPal subscription.
+   */
+  cancelSubscription: async () => {
+    return fetchWithAuth('/cancel-subscription', { method: 'POST' });
+  },
+
+  /**
+   * Changes the authenticated student's existing subscription to a different plan.
+   */
+  changeSubscriptionPlan: async ({ planKey }) => {
+    return fetchWithAuth('/change-subscription-plan', {
+      method: 'POST',
+      body: JSON.stringify({ planKey })
+    });
   }
 };
