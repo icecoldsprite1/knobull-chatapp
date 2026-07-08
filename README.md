@@ -189,11 +189,24 @@ After deploying the backend `/api/send-message` endpoint, run:
 
 ```text
 supabase_security_hardening.sql
+supabase_question_usage_and_plan_rules.sql
 ```
 
 This prevents browser clients from bypassing backend membership checks by writing
 directly to `sessions` or `messages`. The backend service-role key can still
 perform the required writes.
+
+### Usage and Plan Switching Rules
+
+Standard memberships include 5 answered questions per UTC week. A question is
+counted when an expert replies to an uncounted student message; one expert reply
+can count at most one question. Unlimited memberships do not have a weekly
+answered-question cap.
+
+Plan upgrades take effect immediately. Downgrades take effect immediately only
+inside the downgrade window: 7 days for monthly plans and 30 days for yearly
+plans. A user can downgrade once per subscription period. If they downgrade and
+upgrade again, they cannot downgrade again until that period ends.
 
 ### Push Notifications
 

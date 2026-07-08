@@ -10,24 +10,28 @@ const PLAN_CONFIG = {
   standard_monthly: {
     tier: 'standard',
     interval: 'month',
+    price_cents: 3000,
     question_limit_weekly: 5,
     paypal_plan_id: process.env.PAYPAL_STANDARD_MONTHLY_PLAN_ID,
   },
   standard_yearly: {
     tier: 'standard',
     interval: 'year',
+    price_cents: 30000,
     question_limit_weekly: 5,
     paypal_plan_id: process.env.PAYPAL_STANDARD_YEARLY_PLAN_ID,
   },
   unlimited_monthly: {
     tier: 'unlimited',
     interval: 'month',
+    price_cents: 9000,
     question_limit_weekly: null,
     paypal_plan_id: process.env.PAYPAL_UNLIMITED_MONTHLY_PLAN_ID,
   },
   unlimited_yearly: {
     tier: 'unlimited',
     interval: 'year',
+    price_cents: 90000,
     question_limit_weekly: null,
     paypal_plan_id: process.env.PAYPAL_UNLIMITED_YEARLY_PLAN_ID,
   },
@@ -152,6 +156,63 @@ const getSafeFrontendOrigin = (req) => {
   return allowedFrontendOrigins[0] || 'http://localhost:5173';
 };
 
+const addPeriod = (date, interval) => {
+  const nextDate = new Date(date);
+  if (interval === 'year') {
+    nextDate.setUTCFullYear(nextDate.getUTCFullYear() + 1);
+  } else {
+    nextDate.setUTCMonth(nextDate.getUTCMonth() + 1);
+  }
+  return nextDate;
+};
+
+const getDowngradeWindowDays = (interval) => interval === 'year' ? 30 : 7;
+
+const getPlanChangePolicy = (membership, targetPlanKey) => {
+  const currentPlan = PLAN_CONFIG[membership.plan_key];
+  const targetPlan = PLAN_CONFIG[targetPlanKey];
+  const isDowngrade = currentPlan && targetPlan && targetPlan.price_cents < currentPlan.price_cents;
+  const periodStart = new Date(membership.current_period_started_at || membership.created_at);
+  const downgradeWindowDays = getDowngradeWindowDays(membership.billing_interval);
+  const downgradeDeadline = new Date(periodStart);
+  downgradeDeadline.setUTCDate(downgradeDeadline.getUTCDate() + downgradeWindowDays);
+  const lockUntil = membership.downgrade_locked_until
+    ? new Date(membership.downgrade_locked_until)
+    : null;
+
+  return {
+    isDowngrade,
+    downgradeWindowDays,
+    downgradeDeadline,
+    lockUntil,
+    periodEndsAt: addPeriod(periodStart, membership.billing_interval),
+  };
+};
+
+const enforcePlanChangePolicy = (membership, targetPlanKey) => {
+  const policy = getPlanChangePolicy(membership, targetPlanKey);
+
+  if (!policy.isDowngrade) {
+    return policy;
+  }
+
+  const now = new Date();
+
+  if (policy.lockUntil && policy.lockUntil > now) {
+    const error = new Error(`You already used your downgrade for this subscription period. You can downgrade again after ${policy.lockUntil.toLocaleDateString('en-US')}.`);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (now > policy.downgradeDeadline) {
+    const error = new Error(`Downgrades for this plan are only available within ${policy.downgradeWindowDays} days of the current subscription period.`);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return policy;
+};
+
 const verifyPayPalWebhookSignature = async (req, webhookEvent) => {
   if (!process.env.PAYPAL_WEBHOOK_ID) {
     throw new Error('Missing PayPal webhook ID.');
@@ -226,6 +287,7 @@ const recordSubscription = async (req, res) => {
         paypal_subscription_id: paypalSubscriptionId,
         paypal_plan_id: plan.paypal_plan_id,
         status: paypalStatus,
+        current_period_started_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id' })
       .select()
@@ -372,6 +434,7 @@ const changeSubscriptionPlan = async (req, res) => {
       return res.status(400).json({ error: 'You are already on this plan.' });
     }
 
+    const planPolicy = enforcePlanChangePolicy(membership, planKey);
     const paypalSubscription = await getPayPalSubscription(membership.paypal_subscription_id);
     assertSubscriptionBelongsToUser(paypalSubscription, userId);
 
@@ -399,6 +462,11 @@ const changeSubscriptionPlan = async (req, res) => {
         question_limit_weekly: plan.question_limit_weekly,
         paypal_plan_id: plan.paypal_plan_id,
         status: approvalUrl ? 'change_pending' : membership.status,
+        current_period_started_at: new Date().toISOString(),
+        downgrade_used_at: planPolicy.isDowngrade ? new Date().toISOString() : membership.downgrade_used_at,
+        downgrade_locked_until: planPolicy.isDowngrade
+          ? planPolicy.periodEndsAt.toISOString()
+          : membership.downgrade_locked_until,
         updated_at: new Date().toISOString(),
       })
       .eq('user_id', userId)

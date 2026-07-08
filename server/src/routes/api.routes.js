@@ -13,6 +13,7 @@ const { createSession, claimSession } = require('../controllers/session.controll
 const { handleBotCheck } = require('../controllers/bot.controller');
 const { registerDevice } = require('../controllers/notification.controller');
 const { sendMessage } = require('../controllers/message.controller');
+const { getMembershipUsage } = require('../controllers/membership.controller');
 const {
   recordSubscription,
   cancelSubscription,
@@ -59,6 +60,12 @@ router.post('/bot-check', handleBotCheck);
  * Caller: StudentChatPage.jsx, ExpertDashboardPage.jsx
  */
 router.post('/send-message', sendMessage);
+
+/**
+ * Returns current user's membership and answered-question usage.
+ * Caller: LandingPage.jsx
+ */
+router.get('/membership-usage', getMembershipUsage);
 
 /**
  * Saves a unique browser Firebase Cloud Messaging (FCM) token to the DB.

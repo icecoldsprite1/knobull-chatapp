@@ -13,6 +13,7 @@ const MEMBERSHIP_PLANS = [
     title: 'Standard Package',
     description: 'Five questions per week.',
     price: '$30 / month',
+    priceCents: 3000,
     paypalPlanId: import.meta.env.VITE_PAYPAL_STANDARD_MONTHLY_PLAN_ID,
   },
   {
@@ -21,6 +22,7 @@ const MEMBERSHIP_PLANS = [
     title: 'Standard Package',
     description: 'Five questions per week.',
     price: '$300 / year',
+    priceCents: 30000,
     paypalPlanId: import.meta.env.VITE_PAYPAL_STANDARD_YEARLY_PLAN_ID,
   },
   {
@@ -29,6 +31,7 @@ const MEMBERSHIP_PLANS = [
     title: 'Unlimited Package',
     description: 'Unlimited support package.',
     price: '$90 / month',
+    priceCents: 9000,
     paypalPlanId: import.meta.env.VITE_PAYPAL_UNLIMITED_MONTHLY_PLAN_ID,
   },
   {
@@ -37,6 +40,7 @@ const MEMBERSHIP_PLANS = [
     title: 'Unlimited Package',
     description: 'Unlimited support package.',
     price: '$900 / year',
+    priceCents: 90000,
     paypalPlanId: import.meta.env.VITE_PAYPAL_UNLIMITED_YEARLY_PLAN_ID,
   },
 ];
@@ -71,6 +75,7 @@ export default function LandingPage({ user, isAdmin }) {
   const [billingAction, setBillingAction] = useState('');
   const [billingError, setBillingError] = useState('');
   const [pendingBillingAction, setPendingBillingAction] = useState(null);
+  const [membershipUsage, setMembershipUsage] = useState(null);
   const previewBottomRef = useRef(null);
 
   const handlePreviewSend = (e) => {
@@ -182,6 +187,39 @@ export default function LandingPage({ user, isAdmin }) {
   const pendingPlan = pendingBillingAction?.type === 'change'
     ? MEMBERSHIP_PLANS.find((plan) => plan.key === pendingBillingAction.planKey)
     : null;
+  const isPendingDowngrade = pendingPlan && activePlan
+    ? pendingPlan.priceCents < activePlan.priceCents
+    : false;
+  const downgradeWindow = membership?.billing_interval === 'year' ? '30 days' : '7 days';
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const fetchUsage = async () => {
+      if (!hasActiveMembership) {
+        setMembershipUsage(null);
+        return;
+      }
+
+      try {
+        const data = await apiService.getMembershipUsage();
+        if (!isCancelled) {
+          setMembershipUsage(data.usage);
+        }
+      } catch (err) {
+        console.error('Membership usage lookup failed:', err);
+        if (!isCancelled) {
+          setMembershipUsage(null);
+        }
+      }
+    };
+
+    fetchUsage();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [hasActiveMembership, membership?.updated_at]);
 
   const requestPlanChange = (planKey) => {
     setBillingError('');
@@ -376,13 +414,37 @@ export default function LandingPage({ user, isAdmin }) {
                       Manage Subscription
                     </button>
                   </div>
+                  {membershipUsage?.limit != null && (
+                    <div className="mt-5 rounded-xl border border-emerald-200 bg-white p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">Answered questions this week</p>
+                          <p className="mt-1 text-sm font-semibold text-emerald-950">
+                            {membershipUsage.used} of {membershipUsage.limit} used
+                          </p>
+                        </div>
+                        <div className="text-right text-xs font-medium text-emerald-700">
+                          {membershipUsage.remaining} remaining
+                        </div>
+                      </div>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-emerald-100">
+                        <div
+                          className="h-full rounded-full bg-emerald-600"
+                          style={{ width: `${Math.min((membershipUsage.used / membershipUsage.limit) * 100, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {showPlanManagement && (
                   <div className="rounded-xl border border-gray-200 bg-white p-5">
-                    <h3 className="text-base font-bold text-gray-900">Change plan</h3>
+                    <h3 className="text-base font-bold text-gray-900">Switch Plans?</h3>
                     <p className="mt-1 text-sm leading-relaxed text-gray-600">
-                      Choose a different monthly or yearly plan. PayPal may ask you to approve the change.
+                      Upgrades take effect immediately. Downgrades are allowed only within {downgradeWindow} of the current subscription period and can be used once per period.
+                    </p>
+                    <p className="mt-2 text-xs leading-relaxed text-amber-700">
+                      If you downgrade and later upgrade, you cannot downgrade again until this subscription period ends.
                     </p>
                     <div className="mt-4 grid gap-2 sm:grid-cols-2">
                       {availablePlanChanges.map((plan) => (
@@ -464,6 +526,16 @@ export default function LandingPage({ user, isAdmin }) {
                       ? 'Select a monthly or yearly plan to continue with Knobull expert support.'
                       : 'Ask a Knobull expert two questions a week during the trial period.'}
                   </p>
+
+                  <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <h4 className="text-sm font-bold text-amber-950">Switch Plans?</h4>
+                    <p className="mt-1 text-xs leading-relaxed text-amber-800">
+                      Upgrades to a higher plan take effect immediately. Downgrades are only available within 7 days for monthly plans or 30 days for yearly plans, and can be used once per subscription period.
+                    </p>
+                    <p className="mt-2 text-xs leading-relaxed text-amber-800">
+                      If you downgrade and later upgrade again, you cannot downgrade again until that subscription period ends.
+                    </p>
+                  </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   {MEMBERSHIP_PLANS.map((plan) => (
@@ -661,6 +733,11 @@ export default function LandingPage({ user, isAdmin }) {
                       ? 'This will cancel your PayPal subscription and remove active membership access after the cancellation is recorded.'
                       : `You are about to switch from ${activePlanLabel || activePlanTitle} to ${pendingPlan?.price || 'the selected plan'}. PayPal may ask you to approve the change.`}
                   </p>
+                  {isPendingDowngrade && (
+                    <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-relaxed text-amber-800">
+                      Downgrade policy: this downgrade is only allowed within {downgradeWindow} of the current subscription period. After confirming, you cannot downgrade again until this period ends, even if you upgrade later.
+                    </p>
+                  )}
                 </div>
               </div>
               <button

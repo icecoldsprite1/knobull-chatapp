@@ -95,6 +95,13 @@ export const apiService = {
   },
 
   /**
+   * Loads the current membership plus weekly answered-question usage.
+   */
+  getMembershipUsage: async () => {
+    return fetchWithAuth('/membership-usage', { method: 'GET' });
+  },
+
+  /**
    * Called by ExpertDashboardPage to register a browser for push notifications.
    */
   registerDevice: async (token) => {
