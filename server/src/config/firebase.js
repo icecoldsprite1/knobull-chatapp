@@ -1,5 +1,14 @@
-const admin = require('firebase-admin');
 const path = require('path');
+
+let admin;
+
+try {
+  admin = require('firebase-admin');
+} catch (err) {
+  console.warn('⚠️  firebase-admin is not installed. Push notifications will be disabled.');
+  module.exports = null;
+  return;
+}
 
 /**
  * Initialize Firebase Admin SDK

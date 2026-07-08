@@ -12,6 +12,7 @@ const router = express.Router();
 const { createSession, claimSession } = require('../controllers/session.controller');
 const { handleBotCheck } = require('../controllers/bot.controller');
 const { registerDevice } = require('../controllers/notification.controller');
+const { sendMessage } = require('../controllers/message.controller');
 const {
   recordSubscription,
   cancelSubscription,
@@ -52,6 +53,12 @@ router.post('/claim-session', claimSession);
  * Caller: StudentChatPage.jsx
  */
 router.post('/bot-check', handleBotCheck);
+
+/**
+ * Sends a student or expert chat message after backend authorization checks.
+ * Caller: StudentChatPage.jsx, ExpertDashboardPage.jsx
+ */
+router.post('/send-message', sendMessage);
 
 /**
  * Saves a unique browser Firebase Cloud Messaging (FCM) token to the DB.

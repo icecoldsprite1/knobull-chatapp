@@ -1,4 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
+const { getMembershipForUser } = require('../services/membership.service');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -44,6 +45,11 @@ const PAYPAL_WEBHOOK_EVENT_TYPES = new Set([
 const PAYPAL_API_BASE_URL = process.env.PAYPAL_ENV === 'live'
   ? 'https://api-m.paypal.com'
   : 'https://api-m.sandbox.paypal.com';
+
+const allowedFrontendOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 const findPlanByPayPalPlanId = (paypalPlanId) => {
   return Object.entries(PLAN_CONFIG).find(([, plan]) => plan.paypal_plan_id === paypalPlanId) || null;
@@ -124,6 +130,28 @@ const getPayPalSubscription = async (subscriptionId) => {
   });
 };
 
+const assertSubscriptionBelongsToUser = (paypalSubscription, userId) => {
+  if (paypalSubscription?.custom_id !== userId) {
+    const error = new Error('PayPal subscription does not belong to this user.');
+    error.statusCode = 403;
+    throw error;
+  }
+};
+
+const getSafeFrontendOrigin = (req) => {
+  const requestOrigin = req.get('origin');
+
+  if (requestOrigin && allowedFrontendOrigins.includes(requestOrigin)) {
+    return requestOrigin;
+  }
+
+  if (process.env.FRONTEND_URL) {
+    return process.env.FRONTEND_URL;
+  }
+
+  return allowedFrontendOrigins[0] || 'http://localhost:5173';
+};
+
 const verifyPayPalWebhookSignature = async (req, webhookEvent) => {
   if (!process.env.PAYPAL_WEBHOOK_ID) {
     throw new Error('Missing PayPal webhook ID.');
@@ -145,21 +173,6 @@ const verifyPayPalWebhookSignature = async (req, webhookEvent) => {
   return verification?.verification_status === 'SUCCESS';
 };
 
-const getMembershipForUser = async (userId) => {
-  const { data, error } = await supabase
-    .from('memberships')
-    .select('*')
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  if (error) {
-    console.error('Membership lookup error:', error);
-    throw new Error('Failed to check existing membership.');
-  }
-
-  return data;
-};
-
 const recordSubscription = async (req, res) => {
   const userId = req.user.sub;
   const { planKey, paypalSubscriptionId } = req.body;
@@ -179,6 +192,7 @@ const recordSubscription = async (req, res) => {
     }
 
     const paypalSubscription = await getPayPalSubscription(paypalSubscriptionId);
+    assertSubscriptionBelongsToUser(paypalSubscription, userId);
 
     if (paypalSubscription?.plan_id !== plan.paypal_plan_id) {
       return res.status(400).json({ error: 'PayPal subscription does not match the selected plan.' });
@@ -225,7 +239,7 @@ const recordSubscription = async (req, res) => {
     res.json({ membership: data });
   } catch (error) {
     console.error('Subscription record error:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    res.status(error.statusCode || 500).json({ error: error.message || 'Internal Server Error' });
   }
 };
 
@@ -302,6 +316,9 @@ const cancelSubscription = async (req, res) => {
       return res.status(400).json({ error: 'No active PayPal subscription found.' });
     }
 
+    const paypalSubscription = await getPayPalSubscription(membership.paypal_subscription_id);
+    assertSubscriptionBelongsToUser(paypalSubscription, userId);
+
     await paypalRequest(`/v1/billing/subscriptions/${membership.paypal_subscription_id}/cancel`, {
       method: 'POST',
       body: JSON.stringify({
@@ -327,7 +344,7 @@ const cancelSubscription = async (req, res) => {
     res.json({ membership: data });
   } catch (error) {
     console.error('Subscription cancellation error:', error);
-    res.status(500).json({ error: error.message || 'Failed to cancel subscription.' });
+    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to cancel subscription.' });
   }
 };
 
@@ -355,7 +372,10 @@ const changeSubscriptionPlan = async (req, res) => {
       return res.status(400).json({ error: 'You are already on this plan.' });
     }
 
-    const origin = req.get('origin') || 'http://localhost:5173';
+    const paypalSubscription = await getPayPalSubscription(membership.paypal_subscription_id);
+    assertSubscriptionBelongsToUser(paypalSubscription, userId);
+
+    const origin = getSafeFrontendOrigin(req);
     const revision = await paypalRequest(`/v1/billing/subscriptions/${membership.paypal_subscription_id}/revise`, {
       method: 'POST',
       body: JSON.stringify({
@@ -393,7 +413,7 @@ const changeSubscriptionPlan = async (req, res) => {
     res.json({ membership: data, approvalUrl });
   } catch (error) {
     console.error('Subscription plan-change error:', error);
-    res.status(500).json({ error: error.message || 'Failed to change subscription plan.' });
+    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to change subscription plan.' });
   }
 };
 

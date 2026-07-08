@@ -455,6 +455,7 @@ export default function LandingPage({ user, isAdmin }) {
                         plan={plan}
                         disabled={!isVerifiedStudent || membershipLoading}
                         onRequireLogin={() => navigate('/login')}
+                        userId={user?.id}
                       />
                     </div>
                   ))}

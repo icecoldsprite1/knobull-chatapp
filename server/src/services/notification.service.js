@@ -30,6 +30,11 @@ const COOLDOWN_MS = 5 * 1000; // 5 seconds cooldown
  * @param {string} sessionId - The UUID of the session requesting help.
  */
 const notifyExperts = async (sessionId) => {
+  if (!admin?.messaging) {
+    console.log('[Push Notification] Firebase Admin unavailable. Skipping.');
+    return;
+  }
+
   // 1. Anti-Spam Check
   const now = Date.now();
   if (lastNotificationTime[sessionId] && (now - lastNotificationTime[sessionId]) < COOLDOWN_MS) {

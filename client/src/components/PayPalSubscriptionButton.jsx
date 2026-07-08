@@ -34,7 +34,7 @@ const loadPayPalSdk = () => {
   return paypalSdkPromise;
 };
 
-export default function PayPalSubscriptionButton({ plan, disabled, onRequireLogin }) {
+export default function PayPalSubscriptionButton({ plan, disabled, onRequireLogin, userId }) {
   const navigate = useNavigate();
   const buttonRef = useRef(null);
   const [status, setStatus] = useState('');
@@ -63,6 +63,7 @@ export default function PayPalSubscriptionButton({ plan, disabled, onRequireLogi
           createSubscription: (_data, actions) => {
             return actions.subscription.create({
               plan_id: plan.paypalPlanId,
+              custom_id: userId,
             });
           },
           onApprove: async (data) => {
@@ -98,7 +99,7 @@ export default function PayPalSubscriptionButton({ plan, disabled, onRequireLogi
       isCancelled = true;
       buttons?.close?.();
     };
-  }, [disabled, navigate, plan]);
+  }, [disabled, navigate, plan, userId]);
 
   if (disabled) {
     return (

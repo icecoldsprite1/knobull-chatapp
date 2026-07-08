@@ -9,6 +9,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const { GUIDE_SCRIPT } = require('../utils/constants');
 const { notifyExperts } = require('../services/notification.service');
+const { requireActiveMembership } = require('../services/membership.service');
 
 // Initialize the Admin Supabase client.
 // We use the SECRET_KEY so the server can insert messages on behalf of the bot
@@ -43,6 +44,12 @@ const handleBotCheck = async (req, res) => {
   }
   if (typeof messageCount !== 'number' || !Number.isInteger(messageCount) || messageCount < 1) {
     return res.status(400).json({ error: 'Invalid message count' });
+  }
+
+  try {
+    await requireActiveMembership(userId);
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message || 'Membership verification failed.' });
   }
 
   // 🚨 OWNERSHIP CHECK 🚨

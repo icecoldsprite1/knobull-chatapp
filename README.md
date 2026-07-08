@@ -146,6 +146,7 @@ Because Supabase stores auth tokens in `localStorage`, you **must** use two sepa
 | `PORT` | Server port (default: 3000) |
 | `SUPABASE_URL` | Your Supabase project URL |
 | `SUPABASE_SECRET_KEY` | Service Role (secret) key — **never expose publicly** |
+| `FRONTEND_URL` | Canonical frontend URL used for safe PayPal redirects |
 | `PAYPAL_ENV` | PayPal environment (`sandbox` or `live`) |
 | `PAYPAL_CLIENT_ID` | PayPal client ID for backend subscription management |
 | `PAYPAL_CLIENT_SECRET` | PayPal client secret — **never expose publicly** |
@@ -181,3 +182,26 @@ BILLING.SUBSCRIPTION.PAYMENT.FAILED
 ```
 
 After creating the webhook in PayPal, copy its webhook ID into `server/.env` as `PAYPAL_WEBHOOK_ID`.
+
+### Supabase Hardening
+
+After deploying the backend `/api/send-message` endpoint, run:
+
+```text
+supabase_security_hardening.sql
+```
+
+This prevents browser clients from bypassing backend membership checks by writing
+directly to `sessions` or `messages`. The backend service-role key can still
+perform the required writes.
+
+### Push Notifications
+
+Firebase push notifications are optional. The server currently runs safely
+without `firebase-admin`; notification attempts are skipped when that package is
+not installed. If push notifications are re-enabled, add a reviewed, audit-clean
+Firebase Admin version and re-run:
+
+```bash
+npm audit --omit=dev
+```

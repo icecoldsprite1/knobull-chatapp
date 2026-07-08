@@ -10,7 +10,7 @@ import ChatBubble from '../components/ChatBubble';
  * 
  * The main interface for students seeking help.
  * On mount, it checks for an existing session or creates a new one.
- * Displays real-time messages and handles direct insertion into the Supabase database.
+ * Displays real-time messages and sends new messages through the backend.
  * 
  * @param {Object} props.user - The authenticated Supabase user
  * @param {Function} props.onLogout - Allows the student to manually end the session
@@ -130,15 +130,14 @@ export default function StudentChatPage({ user, onLogout }) {
     const content = input; 
     setInput('');
 
-    const { error } = await supabase.from('messages').insert([{
-      session_id: session.id,
-      user_id: user.id,
-      content: content
-    }]);
-
-    if (error) {
-      console.error("Block:", error);
-      alert("Message blocked by RLS policies."); 
+    try {
+      await apiService.sendMessage({
+        sessionId: session.id,
+        content,
+      });
+    } catch (err) {
+      console.error("Message blocked:", err);
+      alert(err.message || "Message blocked by security policies.");
       return;
     }
 

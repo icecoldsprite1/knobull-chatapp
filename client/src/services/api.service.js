@@ -84,6 +84,17 @@ export const apiService = {
   },
 
   /**
+   * Sends a chat message through the backend so membership and session access
+   * checks are enforced server-side.
+   */
+  sendMessage: async ({ sessionId, content }) => {
+    return fetchWithAuth('/send-message', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId, content })
+    });
+  },
+
+  /**
    * Called by ExpertDashboardPage to register a browser for push notifications.
    */
   registerDevice: async (token) => {
