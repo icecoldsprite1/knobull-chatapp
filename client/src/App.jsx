@@ -10,6 +10,15 @@ import ExpertDashboardPage from './pages/ExpertDashboardPage';
 import AuthCallbackPage from './pages/AuthCallbackPage';
 import SubscriptionConfirmationPage from './pages/SubscriptionConfirmationPage';
 
+const withTimeout = (promise, message, timeoutMs = 10000) => {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+};
+
 /**
  * App Component - The Core Router & Auth Manager
  * 
@@ -43,9 +52,16 @@ export default function App() {
   // SESSION PERSISTENCE & AUTH STATE LISTENER
   // ==========================================
   useEffect(() => {
+    let isCancelled = false;
+
     const initAuth = async () => {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
+        const { data: { session }, error } = await withTimeout(
+          supabase.auth.getSession(),
+          'Timed out while restoring your login session.'
+        );
+
+        if (isCancelled) return;
 
         if (error) {
           console.error('Session restore failed:', error);
@@ -60,8 +76,12 @@ export default function App() {
             setIsAdmin(await checkAdminStatus(session.user.id));
           }
         }
+      } catch (err) {
+        console.error('Session restore failed:', err);
       } finally {
-        setAuthLoading(false);
+        if (!isCancelled) {
+          setAuthLoading(false);
+        }
       }
     };
 
@@ -86,7 +106,10 @@ export default function App() {
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isCancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   // ==========================================

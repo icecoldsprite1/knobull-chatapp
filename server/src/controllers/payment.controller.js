@@ -33,9 +33,40 @@ const PLAN_CONFIG = {
 };
 
 const PAYPAL_SUBSCRIPTION_ID_REGEX = /^I-[A-Z0-9]+$/i;
+const PAYPAL_WEBHOOK_EVENT_TYPES = new Set([
+  'BILLING.SUBSCRIPTION.ACTIVATED',
+  'BILLING.SUBSCRIPTION.UPDATED',
+  'BILLING.SUBSCRIPTION.CANCELLED',
+  'BILLING.SUBSCRIPTION.SUSPENDED',
+  'BILLING.SUBSCRIPTION.EXPIRED',
+  'BILLING.SUBSCRIPTION.PAYMENT.FAILED',
+]);
 const PAYPAL_API_BASE_URL = process.env.PAYPAL_ENV === 'live'
   ? 'https://api-m.paypal.com'
   : 'https://api-m.sandbox.paypal.com';
+
+const findPlanByPayPalPlanId = (paypalPlanId) => {
+  return Object.entries(PLAN_CONFIG).find(([, plan]) => plan.paypal_plan_id === paypalPlanId) || null;
+};
+
+const normalizePayPalStatus = (status) => {
+  switch ((status || '').toUpperCase()) {
+    case 'ACTIVE':
+      return 'active';
+    case 'APPROVAL_PENDING':
+      return 'approval_pending';
+    case 'APPROVED':
+      return 'approved';
+    case 'SUSPENDED':
+      return 'suspended';
+    case 'CANCELLED':
+      return 'cancelled';
+    case 'EXPIRED':
+      return 'expired';
+    default:
+      return 'unknown';
+  }
+};
 
 const getPayPalAccessToken = async () => {
   if (!process.env.PAYPAL_CLIENT_ID || !process.env.PAYPAL_CLIENT_SECRET) {
@@ -87,6 +118,33 @@ const paypalRequest = async (path, options = {}) => {
   return data;
 };
 
+const getPayPalSubscription = async (subscriptionId) => {
+  return paypalRequest(`/v1/billing/subscriptions/${subscriptionId}`, {
+    method: 'GET',
+  });
+};
+
+const verifyPayPalWebhookSignature = async (req, webhookEvent) => {
+  if (!process.env.PAYPAL_WEBHOOK_ID) {
+    throw new Error('Missing PayPal webhook ID.');
+  }
+
+  const verification = await paypalRequest('/v1/notifications/verify-webhook-signature', {
+    method: 'POST',
+    body: JSON.stringify({
+      auth_algo: req.get('paypal-auth-algo'),
+      cert_url: req.get('paypal-cert-url'),
+      transmission_id: req.get('paypal-transmission-id'),
+      transmission_sig: req.get('paypal-transmission-sig'),
+      transmission_time: req.get('paypal-transmission-time'),
+      webhook_id: process.env.PAYPAL_WEBHOOK_ID,
+      webhook_event: webhookEvent,
+    }),
+  });
+
+  return verification?.verification_status === 'SUCCESS';
+};
+
 const getMembershipForUser = async (userId) => {
   const { data, error } = await supabase
     .from('memberships')
@@ -116,6 +174,21 @@ const recordSubscription = async (req, res) => {
   }
 
   try {
+    if (!plan.paypal_plan_id) {
+      return res.status(500).json({ error: 'PayPal plan ID is not configured.' });
+    }
+
+    const paypalSubscription = await getPayPalSubscription(paypalSubscriptionId);
+
+    if (paypalSubscription?.plan_id !== plan.paypal_plan_id) {
+      return res.status(400).json({ error: 'PayPal subscription does not match the selected plan.' });
+    }
+
+    const paypalStatus = normalizePayPalStatus(paypalSubscription?.status);
+    if (['cancelled', 'expired', 'suspended'].includes(paypalStatus)) {
+      return res.status(400).json({ error: 'PayPal subscription is not active or pending approval.' });
+    }
+
     const existingMembership = await getMembershipForUser(userId);
 
     if (
@@ -138,7 +211,7 @@ const recordSubscription = async (req, res) => {
         question_limit_weekly: plan.question_limit_weekly,
         paypal_subscription_id: paypalSubscriptionId,
         paypal_plan_id: plan.paypal_plan_id,
-        status: 'approval_pending',
+        status: paypalStatus,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id' })
       .select()
@@ -153,6 +226,69 @@ const recordSubscription = async (req, res) => {
   } catch (error) {
     console.error('Subscription record error:', error);
     res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+const handlePayPalWebhook = async (req, res) => {
+  let webhookEvent;
+
+  try {
+    const rawBody = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : JSON.stringify(req.body);
+    webhookEvent = JSON.parse(rawBody);
+  } catch (error) {
+    return res.status(400).json({ error: 'Invalid webhook payload.' });
+  }
+
+  try {
+    const isVerified = await verifyPayPalWebhookSignature(req, webhookEvent);
+    if (!isVerified) {
+      return res.status(400).json({ error: 'Invalid PayPal webhook signature.' });
+    }
+
+    if (!PAYPAL_WEBHOOK_EVENT_TYPES.has(webhookEvent.event_type)) {
+      return res.status(200).json({ received: true, ignored: true });
+    }
+
+    const resource = webhookEvent.resource || {};
+    const subscriptionId = resource.id || resource.billing_agreement_id;
+
+    if (!subscriptionId || !PAYPAL_SUBSCRIPTION_ID_REGEX.test(subscriptionId)) {
+      return res.status(200).json({ received: true, ignored: true });
+    }
+
+    const planEntry = resource.plan_id ? findPlanByPayPalPlanId(resource.plan_id) : null;
+    const planKey = planEntry?.[0];
+    const plan = planEntry?.[1];
+
+    const updatePayload = {
+      status: webhookEvent.event_type === 'BILLING.SUBSCRIPTION.PAYMENT.FAILED'
+        ? 'payment_failed'
+        : normalizePayPalStatus(resource.status),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (planKey && plan) {
+      updatePayload.plan_key = planKey;
+      updatePayload.tier = plan.tier;
+      updatePayload.billing_interval = plan.interval;
+      updatePayload.question_limit_weekly = plan.question_limit_weekly;
+      updatePayload.paypal_plan_id = plan.paypal_plan_id;
+    }
+
+    const { error } = await supabase
+      .from('memberships')
+      .update(updatePayload)
+      .eq('paypal_subscription_id', subscriptionId);
+
+    if (error) {
+      console.error('PayPal webhook membership update error:', error);
+      return res.status(500).json({ error: 'Failed to sync membership.' });
+    }
+
+    res.status(200).json({ received: true });
+  } catch (error) {
+    console.error('PayPal webhook error:', error);
+    res.status(500).json({ error: error.message || 'Webhook handling failed.' });
   }
 };
 
@@ -263,6 +399,7 @@ const changeSubscriptionPlan = async (req, res) => {
 
 module.exports = {
   recordSubscription,
+  handlePayPalWebhook,
   cancelSubscription,
   changeSubscriptionPlan,
 };

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { BookOpen, ShieldCheck, Send, Library, LogOut } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { BookOpen, ShieldCheck, Send, Library, LogOut, MessageCircle, CreditCard } from 'lucide-react';
 import LoginForm from '../components/LoginForm';
 import PayPalSubscriptionButton from '../components/PayPalSubscriptionButton';
 import { supabase } from '../config/supabase';
@@ -54,6 +54,7 @@ const MEMBERSHIP_PLANS = [
 export default function LandingPage({ user, isAdmin }) {
   const navigate = useNavigate();
   const [showLoginForm, setShowLoginForm] = useState(false);
+  const [showPlanManagement, setShowPlanManagement] = useState(false);
 
   // ==========================================
   // GUEST PREVIEW CHAT (local state only, no database)
@@ -165,6 +166,15 @@ export default function LandingPage({ user, isAdmin }) {
     ? MEMBERSHIP_PLANS.find((plan) => plan.key === membership.plan_key)?.price
     : null;
   const hasActiveMembership = membership && membership.status !== 'cancelled';
+  const activePlan = membership
+    ? MEMBERSHIP_PLANS.find((plan) => plan.key === membership.plan_key)
+    : null;
+  const activePlanTitle = activePlan
+    ? `${activePlan.title.replace(' Package', '')} ${membership.billing_interval}`
+    : 'Membership';
+  const membershipAllowance = membership?.tier === 'unlimited'
+    ? 'Unlimited expert support included'
+    : 'Five expert questions per week included';
   const availablePlanChanges = hasActiveMembership
     ? MEMBERSHIP_PLANS.filter((plan) => plan.key !== membership.plan_key)
     : [];
@@ -272,108 +282,158 @@ export default function LandingPage({ user, isAdmin }) {
 
           <button
             onClick={() => {
-              document.getElementById('preview-chat')?.scrollIntoView({ behavior: 'smooth' });
+              document.getElementById(hasActiveMembership ? 'member-home' : 'preview-chat')?.scrollIntoView({ behavior: 'smooth' });
             }}
             className="px-8 py-3 bg-white text-blue-600 font-bold rounded-xl shadow-lg hover:bg-gray-50 transition-all duration-300"
           >
-            Get started
+            {hasActiveMembership ? 'Go to membership' : 'Get started'}
           </button>
         </div>
       </section>
 
       {/* ===================== MEMBERSHIP PERKS ===================== */}
-      <section className="w-full bg-white py-10 md:py-14 border-b border-gray-200">
+      <section id="member-home" className="w-full bg-white py-10 md:py-14 border-b border-gray-200">
         <div className="max-w-2xl mx-auto px-6">
           <h2 className="text-2xl md:text-3xl font-bold text-gray-900 text-center mb-8 tracking-tight">
-            Knobull Membership
+            {hasActiveMembership ? 'Your Membership' : 'Knobull Membership'}
           </h2>
 
           <div className="bg-white rounded-2xl border border-gray-200 shadow-lg shadow-gray-900/5 p-6 md:p-8 space-y-6">
-            
-            {/* Major Time Savings */}
-            <div>
-              <h3 className="text-base font-bold text-gray-900 mb-1">Major Time Savings</h3>
-              <p className="text-gray-600 text-sm leading-relaxed">
-                Access to a top ranked academic search engine, direct links to research sources, student focused news articles, online courses, career growth coaching, ask learning/career experts questions via chat icon on landing page!
-              </p>
-            </div>
-
-            {/* Learning Career Expert Service Examples */}
-            <div>
-              <h3 className="text-base font-bold text-gray-900 mb-1">Learning Career Expert Service Examples</h3>
-              <p className="text-gray-600 text-sm leading-relaxed">
-                Research guidance, time management, study success, pick major, tough teacher tips, job search success, find a tutor, work/life balance, presentation guidance, most other critical learning/career development support.
-              </p>
-            </div>
-
-            {/* No long waits */}
-            <div>
-              <h3 className="text-base font-bold text-gray-900 mb-1">No long waits</h3>
-              <p className="text-gray-600 text-sm leading-relaxed">
-                Quick response when you need answers on learning/career growth related topics 24/7.
-              </p>
-            </div>
-
-            {/* Learning and Career Experts */}
-            <div>
-              <h3 className="text-base font-bold text-gray-900 mb-1">Learning and Career Experts</h3>
-              <p className="text-gray-600 text-sm leading-relaxed">
-                Chat with experts that have pragmatic knowledge and experience—anytime, anywhere.
-              </p>
-            </div>
-            
-            {/* Start with 30-day free trial */}
-            <div className="pt-6 border-t border-gray-100">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 text-base">
-                  🎉
-                </div>
-                <h3 className="text-lg font-bold text-gray-900">Start with 30-day free trial</h3>
-              </div>
-              <p className="text-gray-600 text-sm leading-relaxed mb-4">
-                Ask a Knobull expert (initially all questions come to President)! Two questions a week during the trial period. 
-              </p>
-              
-              {hasActiveMembership ? (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                  <p className="text-sm font-bold text-emerald-900">Membership active</p>
-                  <p className="mt-1 text-xs leading-relaxed text-emerald-800">
-                    Your current plan is {membership.tier} {membership.billing_interval}
-                    {activePlanLabel ? ` (${activePlanLabel})` : ''}.
-                  </p>
-                  {billingError && (
-                    <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
-                      {billingError}
-                    </p>
-                  )}
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                    {availablePlanChanges.map((plan) => (
-                      <button
-                        key={plan.key}
-                        type="button"
-                        onClick={() => handlePlanChange(plan.key)}
-                        disabled={!!billingAction}
-                        className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-left text-xs font-semibold text-emerald-900 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {billingAction === plan.key ? 'Updating...' : `Switch to ${plan.price}`}
-                      </button>
-                    ))}
+            {hasActiveMembership ? (
+              <>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">Active membership</p>
+                      <h3 className="mt-1 text-xl font-bold capitalize text-emerald-950">{activePlanTitle}</h3>
+                      <p className="mt-1 text-sm text-emerald-800">
+                        {activePlanLabel ? `${activePlanLabel}. ` : ''}{membershipAllowance}.
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wide text-emerald-700">
+                      {membership.status}
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleCancelSubscription}
-                    disabled={!!billingAction}
-                    className="mt-3 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {billingAction === 'cancel' ? 'Cancelling...' : 'Cancel Subscription'}
-                  </button>
+
                   {membership.status === 'change_pending' && (
-                    <p className="mt-3 text-xs leading-relaxed text-emerald-800">
+                    <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
                       Your plan change is pending PayPal approval.
                     </p>
                   )}
+
+                  {billingError && (
+                    <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                      {billingError}
+                    </p>
+                  )}
+
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => navigate('/chat')}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700"
+                    >
+                      <MessageCircle size={16} />
+                      Go to Chat
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowPlanManagement((value) => !value)}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-100"
+                    >
+                      <CreditCard size={16} />
+                      Manage Subscription
+                    </button>
+                  </div>
                 </div>
-              ) : (
+
+                {showPlanManagement && (
+                  <div className="rounded-xl border border-gray-200 bg-white p-5">
+                    <h3 className="text-base font-bold text-gray-900">Change plan</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-gray-600">
+                      Choose a different monthly or yearly plan. PayPal may ask you to approve the change.
+                    </p>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                      {availablePlanChanges.map((plan) => (
+                        <button
+                          key={plan.key}
+                          type="button"
+                          onClick={() => handlePlanChange(plan.key)}
+                          disabled={!!billingAction}
+                          className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs font-semibold text-gray-800 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {billingAction === plan.key ? 'Updating...' : `Switch to ${plan.price}`}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCancelSubscription}
+                      disabled={!!billingAction}
+                      className="mt-4 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {billingAction === 'cancel' ? 'Cancelling...' : 'Cancel Subscription'}
+                    </button>
+                  </div>
+                )}
+
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">Expert chat</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-gray-600">Continue your academic or career support conversation.</p>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">Fast follow-up</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-gray-600">Ask questions when you need guidance without returning to checkout.</p>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">Plan control</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-gray-600">Switch plans or cancel from this page.</p>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Major Time Savings */}
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 mb-1">Major Time Savings</h3>
+                  <p className="text-gray-600 text-sm leading-relaxed">
+                    Access to a top ranked academic search engine, direct links to research sources, student focused news articles, online courses, career growth coaching, and learning or career expert support.
+                  </p>
+                </div>
+
+                {/* Learning Career Expert Service Examples */}
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 mb-1">Learning Career Expert Service Examples</h3>
+                  <p className="text-gray-600 text-sm leading-relaxed">
+                    Research guidance, time management, study success, picking a major, tough teacher tips, job search support, tutoring options, work/life balance, and presentation guidance.
+                  </p>
+                </div>
+
+                {/* No long waits */}
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 mb-1">No long waits</h3>
+                  <p className="text-gray-600 text-sm leading-relaxed">
+                    Quick response when you need answers on learning and career growth topics.
+                  </p>
+                </div>
+
+                {/* Start with 30-day free trial */}
+                <div className="pt-6 border-t border-gray-100">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 text-base">
+                      <BookOpen size={17} />
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-900">
+                      {isVerifiedStudent ? 'Choose a membership' : 'Start with 30-day free trial'}
+                    </h3>
+                  </div>
+                  <p className="text-gray-600 text-sm leading-relaxed mb-4">
+                    {isVerifiedStudent
+                      ? 'Select a monthly or yearly plan to continue with Knobull expert support.'
+                      : 'Ask a Knobull expert two questions a week during the trial period.'}
+                  </p>
+
                 <div className="grid gap-3 sm:grid-cols-2">
                   {MEMBERSHIP_PLANS.map((plan) => (
                     <div
@@ -399,21 +459,25 @@ export default function LandingPage({ user, isAdmin }) {
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
+                </div>
+              </>
+            )}
 
           </div>
         </div>
       </section>
 
       {/* ===================== GUEST PREVIEW CHAT ===================== */}
-      <section id="preview-chat" className="w-full bg-gray-50 py-10 md:py-14 border-b border-gray-200">
+      {!hasActiveMembership && (
+        <section id="preview-chat" className="w-full bg-gray-50 py-10 md:py-14 border-b border-gray-200">
         <div className="max-w-2xl mx-auto px-6">
           <h2 className="text-2xl md:text-3xl font-bold text-gray-900 text-center mb-2 tracking-tight">
-            Try It Out
+            {isVerifiedStudent ? 'Preview Expert Chat' : 'Try It Out'}
           </h2>
           <p className="text-gray-500 text-sm text-center mb-8">
-            Send a message to see how Knobull expert chat works — no account needed.
+            {isVerifiedStudent
+              ? 'Send a sample question before choosing your membership.'
+              : 'Send a message to see how Knobull expert chat works - no account needed.'}
           </p>
 
           <div className="bg-white rounded-2xl border border-gray-200 shadow-lg shadow-gray-900/5 overflow-hidden">
@@ -475,7 +539,8 @@ export default function LandingPage({ user, isAdmin }) {
             )}
           </div>
         </div>
-      </section>
+        </section>
+      )}
 
       {/* ===================== ACCESS PORTALS ===================== */}
       <section id="get-started" className="w-full bg-gray-50 py-12 md:py-16">

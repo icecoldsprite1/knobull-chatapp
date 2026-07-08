@@ -149,7 +149,35 @@ Because Supabase stores auth tokens in `localStorage`, you **must** use two sepa
 | `PAYPAL_ENV` | PayPal environment (`sandbox` or `live`) |
 | `PAYPAL_CLIENT_ID` | PayPal client ID for backend subscription management |
 | `PAYPAL_CLIENT_SECRET` | PayPal client secret — **never expose publicly** |
+| `PAYPAL_WEBHOOK_ID` | PayPal webhook ID for verifying subscription webhook events |
 | `PAYPAL_STANDARD_MONTHLY_PLAN_ID` | PayPal subscription plan ID for Standard monthly |
 | `PAYPAL_STANDARD_YEARLY_PLAN_ID` | PayPal subscription plan ID for Standard yearly |
 | `PAYPAL_UNLIMITED_MONTHLY_PLAN_ID` | PayPal subscription plan ID for Unlimited monthly |
 | `PAYPAL_UNLIMITED_YEARLY_PLAN_ID` | PayPal subscription plan ID for Unlimited yearly |
+
+### PayPal Webhook
+
+Create a PayPal webhook for the backend endpoint:
+
+```text
+https://YOUR_BACKEND_DOMAIN/api/paypal-webhook
+```
+
+For local testing through a tunnel, use the tunnel URL:
+
+```text
+https://YOUR_TUNNEL_URL/api/paypal-webhook
+```
+
+Subscribe to these PayPal events:
+
+```text
+BILLING.SUBSCRIPTION.ACTIVATED
+BILLING.SUBSCRIPTION.UPDATED
+BILLING.SUBSCRIPTION.CANCELLED
+BILLING.SUBSCRIPTION.SUSPENDED
+BILLING.SUBSCRIPTION.EXPIRED
+BILLING.SUBSCRIPTION.PAYMENT.FAILED
+```
+
+After creating the webhook in PayPal, copy its webhook ID into `server/.env` as `PAYPAL_WEBHOOK_ID`.
