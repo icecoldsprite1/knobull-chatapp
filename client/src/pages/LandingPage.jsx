@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen, ShieldCheck, Send, Library, LogOut, MessageCircle, CreditCard } from 'lucide-react';
+import { BookOpen, ShieldCheck, Send, Library, LogOut, MessageCircle, CreditCard, AlertTriangle, X } from 'lucide-react';
 import LoginForm from '../components/LoginForm';
 import PayPalSubscriptionButton from '../components/PayPalSubscriptionButton';
 import { supabase } from '../config/supabase';
@@ -70,6 +70,7 @@ export default function LandingPage({ user, isAdmin }) {
   const [membershipLoading, setMembershipLoading] = useState(false);
   const [billingAction, setBillingAction] = useState('');
   const [billingError, setBillingError] = useState('');
+  const [pendingBillingAction, setPendingBillingAction] = useState(null);
   const previewBottomRef = useRef(null);
 
   const handlePreviewSend = (e) => {
@@ -178,6 +179,24 @@ export default function LandingPage({ user, isAdmin }) {
   const availablePlanChanges = hasActiveMembership
     ? MEMBERSHIP_PLANS.filter((plan) => plan.key !== membership.plan_key)
     : [];
+  const pendingPlan = pendingBillingAction?.type === 'change'
+    ? MEMBERSHIP_PLANS.find((plan) => plan.key === pendingBillingAction.planKey)
+    : null;
+
+  const requestPlanChange = (planKey) => {
+    setBillingError('');
+    setPendingBillingAction({ type: 'change', planKey });
+  };
+
+  const requestCancelSubscription = () => {
+    setBillingError('');
+    setPendingBillingAction({ type: 'cancel' });
+  };
+
+  const closeBillingConfirmation = () => {
+    if (billingAction) return;
+    setPendingBillingAction(null);
+  };
 
   const handlePlanChange = async (planKey) => {
     setBillingError('');
@@ -194,13 +213,11 @@ export default function LandingPage({ user, isAdmin }) {
       setBillingError(err.message || 'Unable to change subscription plan.');
     } finally {
       setBillingAction('');
+      setPendingBillingAction(null);
     }
   };
 
   const handleCancelSubscription = async () => {
-    const confirmed = window.confirm('Cancel your current PayPal subscription?');
-    if (!confirmed) return;
-
     setBillingError('');
     setBillingAction('cancel');
 
@@ -211,6 +228,20 @@ export default function LandingPage({ user, isAdmin }) {
       setBillingError(err.message || 'Unable to cancel subscription.');
     } finally {
       setBillingAction('');
+      setPendingBillingAction(null);
+    }
+  };
+
+  const confirmBillingAction = () => {
+    if (!pendingBillingAction) return;
+
+    if (pendingBillingAction.type === 'change') {
+      handlePlanChange(pendingBillingAction.planKey);
+      return;
+    }
+
+    if (pendingBillingAction.type === 'cancel') {
+      handleCancelSubscription();
     }
   };
 
@@ -358,7 +389,7 @@ export default function LandingPage({ user, isAdmin }) {
                         <button
                           key={plan.key}
                           type="button"
-                          onClick={() => handlePlanChange(plan.key)}
+                          onClick={() => requestPlanChange(plan.key)}
                           disabled={!!billingAction}
                           className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs font-semibold text-gray-800 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
                         >
@@ -368,7 +399,7 @@ export default function LandingPage({ user, isAdmin }) {
                     </div>
                     <button
                       type="button"
-                      onClick={handleCancelSubscription}
+                      onClick={requestCancelSubscription}
                       disabled={!!billingAction}
                       className="mt-4 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
@@ -608,6 +639,83 @@ export default function LandingPage({ user, isAdmin }) {
           © {new Date().getFullYear()} Knobull Academic Resources
         </p>
       </footer>
+
+      {pendingBillingAction && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 px-4 py-6">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl shadow-slate-950/20">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border ${
+                  pendingBillingAction.type === 'cancel'
+                    ? 'border-red-200 bg-red-50 text-red-600'
+                    : 'border-amber-200 bg-amber-50 text-amber-600'
+                }`}>
+                  <AlertTriangle size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-950">
+                    {pendingBillingAction.type === 'cancel' ? 'Cancel subscription?' : 'Switch subscription plan?'}
+                  </h3>
+                  <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                    {pendingBillingAction.type === 'cancel'
+                      ? 'This will cancel your PayPal subscription and remove active membership access after the cancellation is recorded.'
+                      : `You are about to switch from ${activePlanLabel || activePlanTitle} to ${pendingPlan?.price || 'the selected plan'}. PayPal may ask you to approve the change.`}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeBillingConfirmation}
+                disabled={!!billingAction}
+                className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Close confirmation"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Current plan</p>
+              <p className="mt-1 text-sm font-semibold capitalize text-slate-900">
+                {activePlanTitle}{activePlanLabel ? ` (${activePlanLabel})` : ''}
+              </p>
+              {pendingPlan && (
+                <>
+                  <p className="mt-3 text-xs font-bold uppercase tracking-wide text-slate-500">New plan</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {pendingPlan.title} ({pendingPlan.price})
+                  </p>
+                </>
+              )}
+            </div>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={closeBillingConfirmation}
+                disabled={!!billingAction}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Keep Current Plan
+              </button>
+              <button
+                type="button"
+                onClick={confirmBillingAction}
+                disabled={!!billingAction}
+                className={`rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-md transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                  pendingBillingAction.type === 'cancel'
+                    ? 'bg-red-600 shadow-red-600/20 hover:bg-red-700'
+                    : 'bg-blue-600 shadow-blue-600/20 hover:bg-blue-700'
+                }`}
+              >
+                {billingAction
+                  ? pendingBillingAction.type === 'cancel' ? 'Cancelling...' : 'Redirecting...'
+                  : pendingBillingAction.type === 'cancel' ? 'Yes, Cancel' : 'Yes, Switch Plan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
