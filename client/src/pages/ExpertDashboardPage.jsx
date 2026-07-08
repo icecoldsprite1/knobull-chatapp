@@ -170,15 +170,14 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     const content = input; 
     setInput('');
 
-    // Directly insert as an expert. 
-    // Supabase RLS policies check `user.id` against the `expert_id` column of the session.
-    const { error } = await supabase.from('messages').insert([{
-      session_id: activeSession.id,
-      user_id: user.id,
-      content: content
-    }]);
-
-    if (error) alert("Message blocked by Database Security Policies."); 
+    try {
+      await apiService.sendMessage({
+        sessionId: activeSession.id,
+        content,
+      });
+    } catch (err) {
+      alert(err.message || "Message blocked by Database Security Policies.");
+    }
   };
 
   // ==========================================
@@ -320,4 +319,3 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     </div>
   );
 }
-

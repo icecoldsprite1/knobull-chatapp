@@ -9,6 +9,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const { GUIDE_SCRIPT } = require('../utils/constants');
 const { notifyExperts } = require('../services/notification.service');
+const { requireActiveMembership } = require('../services/membership.service');
 
 // Initialize the Admin Supabase client.
 // We use the SECRET_KEY so the server can insert messages on behalf of the bot
@@ -45,6 +46,12 @@ const handleBotCheck = async (req, res) => {
     return res.status(400).json({ error: 'Invalid message count' });
   }
 
+  try {
+    await requireActiveMembership(userId);
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message || 'Membership verification failed.' });
+  }
+
   // 🚨 OWNERSHIP CHECK 🚨
   // Verify that the sessionId actually belongs to the authenticated student.
   // Without this, an attacker could inject bot messages into another student's chat
@@ -70,22 +77,40 @@ const handleBotCheck = async (req, res) => {
   // We don't await this because push notifications shouldn't block the HTTP response to the student.
   notifyExperts(sessionId).catch(console.error);
 
-  // 2. Bot Greeting Logic
-  // Currently, the bot only speaks ONCE: right after the student sends their very first message.
-  if (messageCount === 1) {
+  // 2. Bot Handoff Logic
+  // The guide should speak once per session. Decide this on the server instead
+  // of trusting the frontend's local message count, which can be stale after refresh.
+  try {
+    const { data: existingHandoff, error: handoffLookupError } = await supabase
+      .from('messages')
+      .select('id')
+      .eq('session_id', sessionId)
+      .eq('sender_type', 'guide')
+      .eq('content', GUIDE_SCRIPT.handoff)
+      .limit(1)
+      .maybeSingle();
+
+    if (handoffLookupError) {
+      console.error('Bot handoff lookup error:', handoffLookupError);
+    }
+
+    if (!existingHandoff) {
     // Simulate a natural "typing" delay before the bot responds (1.5 seconds)
-    setTimeout(async () => {
-      try {
-        await supabase.from('messages').insert([{
+      setTimeout(async () => {
+        const { error: insertError } = await supabase.from('messages').insert([{
           session_id: sessionId,
           user_id: userId,
           content: GUIDE_SCRIPT.handoff, // "Connecting you to an academic advisor..."
           sender_type: 'guide'           // Identifies this as a bot aesthetic on the frontend
         }]);
-      } catch (err) {
-        console.error("Bot failed to insert reply to Supabase:", err);
-      }
-    }, 1500);
+
+        if (insertError) {
+          console.error("Bot failed to insert reply to Supabase:", insertError);
+        }
+      }, 1500);
+    }
+  } catch (err) {
+    console.error('Bot handoff error:', err);
   }
   
   // 3. Return immediate success to the student's browser 

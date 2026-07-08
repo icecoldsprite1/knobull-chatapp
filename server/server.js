@@ -15,6 +15,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const apiRoutes = require('./src/routes/api.routes');
+const { handlePayPalWebhook } = require('./src/controllers/payment.controller');
 
 const app = express();
 
@@ -63,6 +64,13 @@ const apiLimiter = rateLimit({
 });
 app.use('/api', apiLimiter);
 
+/**
+ * PayPal sends webhook calls directly to the backend, not through a signed-in
+ * Supabase user session. Keep this route outside api.routes.js because that
+ * router requires a Supabase JWT on every request.
+ */
+app.post('/api/paypal-webhook', express.raw({ type: 'application/json', limit: '100kb' }), handlePayPalWebhook);
+
 // Parse incoming payloads with JSON payloads automatically to `req.body`.
 app.use(express.json({ limit: '10kb' }));
 
@@ -90,4 +98,3 @@ app.get('/health', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`[Knobull Server] Running securely on port ${PORT}`));
-

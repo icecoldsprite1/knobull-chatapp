@@ -1,5 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const { GUIDE_SCRIPT } = require('../utils/constants');
+const { requireActiveMembership } = require('../services/membership.service');
 
 // Initialize the Admin Supabase client in the controller context
 const supabase = createClient(
@@ -21,6 +22,8 @@ const createSession = async (req, res) => {
   }
 
   try {
+    await requireActiveMembership(userId);
+
     // 1. Create the Session Row for the student
     const { data: session, error: sessionError } = await supabase
       .from('sessions')
@@ -62,7 +65,7 @@ const createSession = async (req, res) => {
     res.json({ session });
   } catch (error) {
     console.error("Session creation error:", error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    res.status(error.statusCode || 500).json({ error: error.message || 'Internal Server Error' });
   }
 };
 

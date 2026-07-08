@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Library, LogOut } from 'lucide-react';
+import { Send, Library, LogOut, Home } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { apiService } from '../services/api.service';
 import ChatBubble from '../components/ChatBubble';
@@ -9,7 +10,7 @@ import ChatBubble from '../components/ChatBubble';
  * 
  * The main interface for students seeking help.
  * On mount, it checks for an existing session or creates a new one.
- * Displays real-time messages and handles direct insertion into the Supabase database.
+ * Displays real-time messages and sends new messages through the backend.
  * 
  * @param {Object} props.user - The authenticated Supabase user
  * @param {Function} props.onLogout - Allows the student to manually end the session
@@ -129,15 +130,14 @@ export default function StudentChatPage({ user, onLogout }) {
     const content = input; 
     setInput('');
 
-    const { error } = await supabase.from('messages').insert([{
-      session_id: session.id,
-      user_id: user.id,
-      content: content
-    }]);
-
-    if (error) {
-      console.error("Block:", error);
-      alert("Message blocked by RLS policies."); 
+    try {
+      await apiService.sendMessage({
+        sessionId: session.id,
+        content,
+      });
+    } catch (err) {
+      console.error("Message blocked:", err);
+      alert(err.message || "Message blocked by security policies.");
       return;
     }
 
@@ -197,14 +197,22 @@ export default function StudentChatPage({ user, onLogout }) {
               </div>
             </div>
           </div>
-          {onLogout && (
-            <button 
-              onClick={onLogout} 
+          <div className="flex items-center gap-2">
+            <Link
+              to="/"
               className="flex items-center gap-1.5 text-xs font-semibold text-blue-50 hover:text-white px-3 py-1.5 border border-blue-400/30 hover:bg-blue-600 rounded-lg transition-all"
             >
-              <LogOut size={14} /> Sign Out
-            </button>
-          )}
+              <Home size={14} /> Home
+            </Link>
+            {onLogout && (
+              <button 
+                onClick={onLogout} 
+                className="flex items-center gap-1.5 text-xs font-semibold text-blue-50 hover:text-white px-3 py-1.5 border border-blue-400/30 hover:bg-blue-600 rounded-lg transition-all"
+              >
+                <LogOut size={14} /> Sign Out
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Messages */}

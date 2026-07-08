@@ -12,6 +12,13 @@ const router = express.Router();
 const { createSession, claimSession } = require('../controllers/session.controller');
 const { handleBotCheck } = require('../controllers/bot.controller');
 const { registerDevice } = require('../controllers/notification.controller');
+const { sendMessage } = require('../controllers/message.controller');
+const { getMembershipUsage } = require('../controllers/membership.controller');
+const {
+  recordSubscription,
+  cancelSubscription,
+  changeSubscriptionPlan,
+} = require('../controllers/payment.controller');
 
 // Import security middleware
 const { requireAuth } = require('../middlewares/auth.middleware');
@@ -49,10 +56,40 @@ router.post('/claim-session', claimSession);
 router.post('/bot-check', handleBotCheck);
 
 /**
+ * Sends a student or expert chat message after backend authorization checks.
+ * Caller: StudentChatPage.jsx, ExpertDashboardPage.jsx
+ */
+router.post('/send-message', sendMessage);
+
+/**
+ * Returns current user's membership and answered-question usage.
+ * Caller: LandingPage.jsx
+ */
+router.get('/membership-usage', getMembershipUsage);
+
+/**
  * Saves a unique browser Firebase Cloud Messaging (FCM) token to the DB.
  * Allows the server to send push notifications to a specific expert's browser.
  * Caller: notification.service.js
  */
 router.post('/register-device', registerDevice);
+
+/**
+ * Records a PayPal subscription approval for the authenticated student.
+ * Caller: PayPalSubscriptionButton.jsx
+ */
+router.post('/record-subscription', recordSubscription);
+
+/**
+ * Cancels the authenticated student's active PayPal subscription.
+ * Caller: LandingPage.jsx billing controls
+ */
+router.post('/cancel-subscription', cancelSubscription);
+
+/**
+ * Revises the authenticated student's existing PayPal subscription to another plan.
+ * Caller: LandingPage.jsx billing controls
+ */
+router.post('/change-subscription-plan', changeSubscriptionPlan);
 
 module.exports = router;

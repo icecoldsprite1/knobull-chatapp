@@ -4,6 +4,8 @@ import { Mail, Lock, ArrowLeft, CheckCircle } from 'lucide-react';
 import HCaptcha from '@hcaptcha/react-hcaptcha';
 import { supabase } from '../config/supabase';
 
+const HCAPTCHA_SITEKEY = import.meta.env.VITE_HCAPTCHA_SITEKEY;
+
 /**
  * StudentAuthPage
  * 
@@ -26,8 +28,7 @@ export default function StudentAuthPage() {
   const [captchaToken, setCaptchaToken] = useState(null);
   const captchaRef = useRef(null);
 
-  const resetForm = () => {
-    setError(null);
+  const resetCaptcha = () => {
     setCaptchaToken(null);
     captchaRef.current?.resetCaptcha();
   };
@@ -46,6 +47,8 @@ export default function StudentAuthPage() {
    */
   const handleSignUp = async (e) => {
     e.preventDefault();
+
+    if (isLoading) return;
     
     if (!captchaToken) {
       setError('Please complete the security check.');
@@ -65,25 +68,31 @@ export default function StudentAuthPage() {
     setIsLoading(true);
     setError(null);
 
-    const { error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        captchaToken,
-        emailRedirectTo: `${window.location.origin}/auth/callback`
+    try {
+      const { error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          captchaToken,
+          emailRedirectTo: `${window.location.origin}/auth/callback`
+        }
+      });
+
+      if (signUpError) {
+        setError(signUpError.message);
+        resetCaptcha();
+        return;
       }
-    });
 
-    if (signUpError) {
-      setError(signUpError.message);
+      // Successfully registered — show "check your email" state
+      setMode('check-email');
+    } catch (err) {
+      console.error('Signup failed:', err);
+      setError('Unable to create account. Please try again.');
+      resetCaptcha();
+    } finally {
       setIsLoading(false);
-      resetForm();
-      return;
     }
-
-    // Successfully registered — show "check your email" state
-    setIsLoading(false);
-    setMode('check-email');
   };
 
   /**
@@ -91,6 +100,8 @@ export default function StudentAuthPage() {
    */
   const handleLogin = async (e) => {
     e.preventDefault();
+
+    if (isLoading) return;
 
     if (!captchaToken) {
       setError('Please complete the security check.');
@@ -100,31 +111,36 @@ export default function StudentAuthPage() {
     setIsLoading(true);
     setError(null);
 
-    const { data, error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-      options: { captchaToken }
-    });
+    try {
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+        options: { captchaToken }
+      });
 
-    if (authError) {
-      setError(authError.message);
+      if (authError) {
+        setError(authError.message);
+        resetCaptcha();
+        return;
+      }
+
+      // Check if email is confirmed
+      if (data.user && !data.user.email_confirmed_at) {
+        await supabase.auth.signOut();
+        setError('Please verify your email before signing in. Check your inbox.');
+        resetCaptcha();
+        return;
+      }
+
+      setPassword('');
+      navigate('/chat', { replace: true });
+    } catch (err) {
+      console.error('Login failed:', err);
+      setError('Unable to sign in. Please try again.');
+      resetCaptcha();
+    } finally {
       setIsLoading(false);
-      resetForm();
-      return;
     }
-
-    // Check if email is confirmed
-    if (data.user && !data.user.email_confirmed_at) {
-      await supabase.auth.signOut();
-      setError('Please verify your email before signing in. Check your inbox.');
-      setIsLoading(false);
-      resetForm();
-      return;
-    }
-
-    setPassword('');
-    setIsLoading(false);
-    navigate('/chat', { replace: true });
   };
 
   // ============================================
@@ -246,19 +262,32 @@ export default function StudentAuthPage() {
           )}
 
           {/* CAPTCHA */}
-          <div className="flex justify-center my-2">
-            <HCaptcha
-              ref={captchaRef}
-              sitekey={import.meta.env.VITE_HCAPTCHA_SITEKEY}
-              onVerify={(token) => setCaptchaToken(token)}
-              onExpire={() => setCaptchaToken(null)}
-            />
-          </div>
+          {HCAPTCHA_SITEKEY ? (
+            <div className="flex justify-center my-2">
+              <HCaptcha
+                ref={captchaRef}
+                sitekey={HCAPTCHA_SITEKEY}
+                onVerify={(token) => {
+                  setCaptchaToken(token);
+                  setError(null);
+                }}
+                onExpire={() => setCaptchaToken(null)}
+                onError={() => {
+                  setCaptchaToken(null);
+                  setError('Security check failed to load. Please refresh and try again.');
+                }}
+              />
+            </div>
+          ) : (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              Missing hCaptcha site key. Add VITE_HCAPTCHA_SITEKEY to client/.env.
+            </div>
+          )}
 
           {/* Submit */}
           <button 
             type="submit" 
-            disabled={isLoading}
+            disabled={isLoading || !HCAPTCHA_SITEKEY}
             className="w-full bg-blue-600 hover:bg-blue-700 shadow-md shadow-blue-600/20 text-white font-medium py-3 rounded-xl transition-all text-sm disabled:opacity-50 mt-2 active:scale-[0.98]"
           >
             {isLoading 

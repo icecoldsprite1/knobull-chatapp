@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from './config/supabase';
 
 // Pages
@@ -8,6 +8,23 @@ import StudentAuthPage from './pages/StudentAuthPage';
 import StudentChatPage from './pages/StudentChatPage';
 import ExpertDashboardPage from './pages/ExpertDashboardPage';
 import AuthCallbackPage from './pages/AuthCallbackPage';
+import SubscriptionConfirmationPage from './pages/SubscriptionConfirmationPage';
+
+const ACTIVE_MEMBERSHIP_STATUSES = new Set([
+  'active',
+  'approved',
+  'approval_pending',
+  'change_pending',
+]);
+
+const withTimeout = (promise, message, timeoutMs = 10000) => {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+};
 
 /**
  * App Component - The Core Router & Auth Manager
@@ -21,7 +38,11 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
+  const [membership, setMembership] = useState(null);
+  const [membershipLoading, setMembershipLoading] = useState(false);
+  const [membershipChecked, setMembershipChecked] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
 
   const checkAdminStatus = async (userId) => {
     const { data, error } = await supabase
@@ -42,9 +63,16 @@ export default function App() {
   // SESSION PERSISTENCE & AUTH STATE LISTENER
   // ==========================================
   useEffect(() => {
+    let isCancelled = false;
+
     const initAuth = async () => {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
+        const { data: { session }, error } = await withTimeout(
+          supabase.auth.getSession(),
+          'Timed out while restoring your login session.'
+        );
+
+        if (isCancelled) return;
 
         if (error) {
           console.error('Session restore failed:', error);
@@ -59,8 +87,12 @@ export default function App() {
             setIsAdmin(await checkAdminStatus(session.user.id));
           }
         }
+      } catch (err) {
+        console.error('Session restore failed:', err);
       } finally {
-        setAuthLoading(false);
+        if (!isCancelled) {
+          setAuthLoading(false);
+        }
       }
     };
 
@@ -85,7 +117,10 @@ export default function App() {
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isCancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   // ==========================================
@@ -121,6 +156,24 @@ export default function App() {
     return children;
   };
 
+  const ProtectedPaidStudentRoute = ({ children }) => {
+    if (authLoading || membershipLoading || !membershipChecked) return <LoadingSpinner />;
+
+    if (!user || user.is_anonymous) {
+      return <Navigate to="/login" replace />;
+    }
+
+    if (!user.email_confirmed_at) {
+      return <Navigate to="/login" replace />;
+    }
+
+    if (!ACTIVE_MEMBERSHIP_STATUSES.has(membership?.status)) {
+      return <Navigate to="/" replace />;
+    }
+
+    return children;
+  };
+
   /**
    * ProtectedAdminRoute - Requires admin table membership
    */
@@ -133,6 +186,45 @@ export default function App() {
 
     return children;
   };
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const fetchMembership = async () => {
+      if (!user || user.is_anonymous || isAdmin) {
+        setMembership(null);
+        setMembershipLoading(false);
+        setMembershipChecked(true);
+        return;
+      }
+
+      setMembershipChecked(false);
+      setMembershipLoading(true);
+      const { data, error } = await supabase
+        .from('memberships')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (isCancelled) return;
+
+      if (error) {
+        console.error('Membership lookup failed:', error);
+        setMembership(null);
+      } else {
+        setMembership(data);
+      }
+
+      setMembershipLoading(false);
+      setMembershipChecked(true);
+    };
+
+    fetchMembership();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [user, isAdmin, location.pathname]);
 
   // ==========================================
   // LOADING STATE
@@ -148,16 +240,21 @@ export default function App() {
       <Route path="/" element={<LandingPage user={user} isAdmin={isAdmin} />} />
       <Route path="/login" element={
         user && user.email_confirmed_at && !user.is_anonymous
-          ? <Navigate to="/chat" replace />
+          ? <Navigate to="/" replace />
           : <StudentAuthPage />
       } />
       <Route path="/auth/callback" element={<AuthCallbackPage />} />
+      <Route path="/subscription/confirmed" element={
+        <ProtectedStudentRoute>
+          <SubscriptionConfirmationPage />
+        </ProtectedStudentRoute>
+      } />
       
       {/* Protected Student Route */}
       <Route path="/chat" element={
-        <ProtectedStudentRoute>
+        <ProtectedPaidStudentRoute>
           <StudentChatPage user={user} onLogout={handleLogout} />
-        </ProtectedStudentRoute>
+        </ProtectedPaidStudentRoute>
       } />
 
       {/* Protected Admin Route */}

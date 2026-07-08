@@ -84,12 +84,58 @@ export const apiService = {
   },
 
   /**
+   * Sends a chat message through the backend so membership and session access
+   * checks are enforced server-side.
+   */
+  sendMessage: async ({ sessionId, content }) => {
+    return fetchWithAuth('/send-message', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId, content })
+    });
+  },
+
+  /**
+   * Loads the current membership plus weekly answered-question usage.
+   */
+  getMembershipUsage: async () => {
+    return fetchWithAuth('/membership-usage', { method: 'GET' });
+  },
+
+  /**
    * Called by ExpertDashboardPage to register a browser for push notifications.
    */
   registerDevice: async (token) => {
     return fetchWithAuth('/register-device', {
       method: 'POST',
       body: JSON.stringify({ token })
+    });
+  },
+
+  /**
+   * Called after PayPal approves a subscription.
+   * Records the subscription against the authenticated Supabase user.
+   */
+  recordSubscription: async ({ planKey, paypalSubscriptionId }) => {
+    return fetchWithAuth('/record-subscription', {
+      method: 'POST',
+      body: JSON.stringify({ planKey, paypalSubscriptionId })
+    });
+  },
+
+  /**
+   * Cancels the authenticated student's active PayPal subscription.
+   */
+  cancelSubscription: async () => {
+    return fetchWithAuth('/cancel-subscription', { method: 'POST' });
+  },
+
+  /**
+   * Changes the authenticated student's existing subscription to a different plan.
+   */
+  changeSubscriptionPlan: async ({ planKey }) => {
+    return fetchWithAuth('/change-subscription-plan', {
+      method: 'POST',
+      body: JSON.stringify({ planKey })
     });
   }
 };

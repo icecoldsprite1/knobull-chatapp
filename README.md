@@ -134,6 +134,11 @@ Because Supabase stores auth tokens in `localStorage`, you **must** use two sepa
 | `VITE_SUPABASE_URL` | Your Supabase project URL |
 | `VITE_SUPABASE_ANON_KEY` | Public (anon) key — safe for the browser |
 | `VITE_API_URL` | Express server URL (e.g., `http://localhost:3000/api`) |
+| `VITE_PAYPAL_CLIENT_ID` | PayPal sandbox/live client ID for rendering subscription buttons |
+| `VITE_PAYPAL_STANDARD_MONTHLY_PLAN_ID` | PayPal subscription plan ID for Standard monthly |
+| `VITE_PAYPAL_STANDARD_YEARLY_PLAN_ID` | PayPal subscription plan ID for Standard yearly |
+| `VITE_PAYPAL_UNLIMITED_MONTHLY_PLAN_ID` | PayPal subscription plan ID for Unlimited monthly |
+| `VITE_PAYPAL_UNLIMITED_YEARLY_PLAN_ID` | PayPal subscription plan ID for Unlimited yearly |
 
 ### `server/.env`
 | Variable | Description |
@@ -141,3 +146,75 @@ Because Supabase stores auth tokens in `localStorage`, you **must** use two sepa
 | `PORT` | Server port (default: 3000) |
 | `SUPABASE_URL` | Your Supabase project URL |
 | `SUPABASE_SECRET_KEY` | Service Role (secret) key — **never expose publicly** |
+| `FRONTEND_URL` | Canonical frontend URL used for safe PayPal redirects |
+| `PAYPAL_ENV` | PayPal environment (`sandbox` or `live`) |
+| `PAYPAL_CLIENT_ID` | PayPal client ID for backend subscription management |
+| `PAYPAL_CLIENT_SECRET` | PayPal client secret — **never expose publicly** |
+| `PAYPAL_WEBHOOK_ID` | PayPal webhook ID for verifying subscription webhook events |
+| `PAYPAL_STANDARD_MONTHLY_PLAN_ID` | PayPal subscription plan ID for Standard monthly |
+| `PAYPAL_STANDARD_YEARLY_PLAN_ID` | PayPal subscription plan ID for Standard yearly |
+| `PAYPAL_UNLIMITED_MONTHLY_PLAN_ID` | PayPal subscription plan ID for Unlimited monthly |
+| `PAYPAL_UNLIMITED_YEARLY_PLAN_ID` | PayPal subscription plan ID for Unlimited yearly |
+
+### PayPal Webhook
+
+Create a PayPal webhook for the backend endpoint:
+
+```text
+https://YOUR_BACKEND_DOMAIN/api/paypal-webhook
+```
+
+For local testing through a tunnel, use the tunnel URL:
+
+```text
+https://YOUR_TUNNEL_URL/api/paypal-webhook
+```
+
+Subscribe to these PayPal events:
+
+```text
+BILLING.SUBSCRIPTION.ACTIVATED
+BILLING.SUBSCRIPTION.UPDATED
+BILLING.SUBSCRIPTION.CANCELLED
+BILLING.SUBSCRIPTION.SUSPENDED
+BILLING.SUBSCRIPTION.EXPIRED
+BILLING.SUBSCRIPTION.PAYMENT.FAILED
+```
+
+After creating the webhook in PayPal, copy its webhook ID into `server/.env` as `PAYPAL_WEBHOOK_ID`.
+
+### Supabase Hardening
+
+After deploying the backend `/api/send-message` endpoint, run:
+
+```text
+supabase_security_hardening.sql
+supabase_question_usage_and_plan_rules.sql
+```
+
+This prevents browser clients from bypassing backend membership checks by writing
+directly to `sessions` or `messages`. The backend service-role key can still
+perform the required writes.
+
+### Usage and Plan Switching Rules
+
+Standard memberships include 5 answered questions per UTC week. A question is
+counted when an expert replies to an uncounted student message; one expert reply
+can count at most one question. Unlimited memberships do not have a weekly
+answered-question cap.
+
+Plan upgrades take effect immediately. Downgrades take effect immediately only
+inside the downgrade window: 7 days for monthly plans and 30 days for yearly
+plans. A user can downgrade once per subscription period. If they downgrade and
+upgrade again, they cannot downgrade again until that period ends.
+
+### Push Notifications
+
+Firebase push notifications are optional. The server currently runs safely
+without `firebase-admin`; notification attempts are skipped when that package is
+not installed. If push notifications are re-enabled, add a reviewed, audit-clean
+Firebase Admin version and re-run:
+
+```bash
+npm audit --omit=dev
+```
