@@ -4,6 +4,9 @@
     "start": "cd server && npm start",
     "heroku-postbuild": "cd server && npm install"
   },
+  "dependencies": {
+    "serverless-http": "^3.2.0"
+  },
   "engines": {
     "node": "20.x"
   }

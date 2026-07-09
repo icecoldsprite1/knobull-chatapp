@@ -23,6 +23,10 @@ const app = express();
 // correctly identifies the user's IP instead of the proxy's IP.
 app.set('trust proxy', 1);
 
+app.get('/.netlify/functions/api/health', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
 // ==========================================
 // 1. GLOBAL MIDDLEWARE
 // ==========================================
@@ -63,6 +67,7 @@ const apiLimiter = rateLimit({
   message: { error: 'Too many requests. Please try again later.' },
 });
 app.use('/api', apiLimiter);
+app.use('/.netlify/functions/api', apiLimiter);
 
 /**
  * PayPal sends webhook calls directly to the backend, not through a signed-in
@@ -70,6 +75,7 @@ app.use('/api', apiLimiter);
  * router requires a Supabase JWT on every request.
  */
 app.post('/api/paypal-webhook', express.raw({ type: 'application/json', limit: '100kb' }), handlePayPalWebhook);
+app.post('/.netlify/functions/api/paypal-webhook', express.raw({ type: 'application/json', limit: '100kb' }), handlePayPalWebhook);
 
 // Parse incoming payloads with JSON payloads automatically to `req.body`.
 app.use(express.json({ limit: '10kb' }));
@@ -83,6 +89,7 @@ app.use(express.json({ limit: '10kb' }));
 // inside the router level (`api.routes.js`), NOT globally, allowing public 
 // routes (like /health) to exist without requiring authentication.
 app.use('/api', apiRoutes);
+app.use('/.netlify/functions/api', apiRoutes);
 
 /**
  * Basic health check endpoint used by deployment platforms (Render, Heroku) 
@@ -96,5 +103,9 @@ app.get('/health', (req, res) => {
 // 3. SERVER INITIALIZATION
 // ==========================================
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`[Knobull Server] Running securely on port ${PORT}`));
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => console.log(`[Knobull Server] Running securely on port ${PORT}`));
+}
+
+module.exports = app;
