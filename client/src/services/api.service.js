@@ -40,11 +40,20 @@ const fetchWithAuth = async (endpoint, options = {}) => {
     headers,
   });
 
-  // Attempt to parse any returned JSON
-  const data = await response.json().catch(() => ({}));
+  // Attempt to parse any returned JSON, while preserving useful non-JSON errors.
+  const responseText = await response.text();
+  let data = {};
+
+  if (responseText) {
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      data = { error: responseText.slice(0, 160) };
+    }
+  }
 
   if (!response.ok) {
-    throw new Error(data.error || 'API Request Failed');
+    throw new Error(data.error || `API request failed with status ${response.status}`);
   }
 
   return data;

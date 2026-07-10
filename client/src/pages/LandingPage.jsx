@@ -131,7 +131,8 @@ export default function LandingPage({ user, isAdmin }) {
     navigate('/', { replace: true });
   };
 
-  const isVerifiedStudent = user && !user.is_anonymous && user.email_confirmed_at && !isAdmin;
+  const isVerifiedUser = user && !user.is_anonymous && user.email_confirmed_at;
+  const isVerifiedStudent = isVerifiedUser && !isAdmin;
 
   useEffect(() => {
     let isCancelled = false;
@@ -518,14 +519,32 @@ export default function LandingPage({ user, isAdmin }) {
                       <BookOpen size={17} />
                     </div>
                     <h3 className="text-lg font-bold text-gray-900">
-                      {isVerifiedStudent ? 'Choose a membership' : 'Start with 30-day free trial'}
+                      {isAdmin ? 'Admin account detected' : isVerifiedStudent ? 'Choose a membership' : 'Start with 30-day free trial'}
                     </h3>
                   </div>
                   <p className="text-gray-600 text-sm leading-relaxed mb-4">
-                    {isVerifiedStudent
+                    {isAdmin
+                      ? 'This account has Advisor Dashboard access. Use a non-admin student account to test subscriptions and student chat.'
+                      : isVerifiedStudent
                       ? 'Select a monthly or yearly plan to continue with Knobull expert support.'
                       : 'Ask a Knobull expert two questions a week during the trial period.'}
                   </p>
+
+                  {isAdmin && (
+                    <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-sm font-semibold text-slate-900">Admins cannot subscribe from this account.</p>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                        This prevents staff accounts from being treated as paid student accounts. Sign out and use a separate student test account for PayPal subscription testing.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleSignOut}
+                        className="mt-3 text-xs font-bold text-blue-700 hover:text-blue-900"
+                      >
+                        Sign out
+                      </button>
+                    </div>
+                  )}
 
                   <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
                     <h4 className="text-sm font-bold text-amber-950">Switch Plans?</h4>
