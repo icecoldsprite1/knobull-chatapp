@@ -61,6 +61,13 @@ export const apiService = {
   createSession: async () => {
     return fetchWithAuth('/create-session', { method: 'POST' });
   },
+
+  /**
+   * Loads enriched advisor queue data.
+   */
+  getExpertSessions: async () => {
+    return fetchWithAuth('/expert-sessions', { method: 'GET' });
+  },
   
   /**
    * Called by an Expert to take ownership of a student's session.

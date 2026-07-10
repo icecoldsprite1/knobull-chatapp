@@ -112,8 +112,12 @@ const sendMessage = async (req, res) => {
     const isAssignedExpert = session.expert_id === userId;
     const isAdmin = await getAdminStatus(userId);
 
-    if (!isStudent && !isAssignedExpert && !isAdmin) {
+    if (!isStudent && !isAssignedExpert) {
       return res.status(403).json({ error: 'Forbidden: You do not have access to this chat session.' });
+    }
+
+    if (!isStudent && !isAdmin) {
+      return res.status(403).json({ error: 'Forbidden: Only authorized experts can reply to student sessions.' });
     }
 
     if (isStudent) {

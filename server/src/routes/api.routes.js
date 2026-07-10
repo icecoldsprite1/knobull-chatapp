@@ -9,7 +9,7 @@ const express = require('express');
 const router = express.Router();
 
 // Import controllers
-const { createSession, claimSession } = require('../controllers/session.controller');
+const { createSession, listExpertSessions, claimSession } = require('../controllers/session.controller');
 const { handleBotCheck } = require('../controllers/bot.controller');
 const { registerDevice } = require('../controllers/notification.controller');
 const { sendMessage } = require('../controllers/message.controller');
@@ -41,6 +41,13 @@ router.use(requireAuth);
  * Caller: StudentChatPage.jsx
  */
 router.post('/create-session', createSession);
+
+/**
+ * Returns enriched advisor queue data: student identity, message preview,
+ * recent activity, and student message counts.
+ * Caller: ExpertDashboardPage.jsx
+ */
+router.get('/expert-sessions', listExpertSessions);
 
 /**
  * Allows an expert to "take" a session, assigning it to them.
