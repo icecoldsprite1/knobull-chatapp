@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Send, User, LogOut, Bell } from 'lucide-react';
+import { Send, User, LogOut, Bell, Home } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { apiService } from '../services/api.service';
 import { requestNotificationPermission, onForegroundMessage } from '../config/firebase';
@@ -30,6 +31,7 @@ export default function ExpertDashboardPage({ user, onLogout }) {
   const [notificationsEnabled, setNotificationsEnabled] = useState(false); // UI toggle state for push alerts
   const [activeTab, setActiveTab] = useState('mine');
   const [queueError, setQueueError] = useState(null);
+  const [pendingActions, setPendingActions] = useState({});
   const [readCounts, setReadCounts] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(`knobull-advisor-read-counts:${user.id}`)) || {};
@@ -38,6 +40,9 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     }
   });
   const bottomRef = useRef(null);
+  const fetchInFlightRef = useRef(false);
+  const fetchQueuedRef = useRef(false);
+  const fetchCooldownRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem(`knobull-advisor-read-counts:${user.id}`, JSON.stringify(readCounts));
@@ -97,6 +102,15 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     return `${session.questions_used_weekly || 0} used / ${session.questions_remaining_weekly} left this week`;
   };
 
+  const refreshSessionsSoon = () => {
+    if (fetchCooldownRef.current) return;
+
+    fetchCooldownRef.current = window.setTimeout(() => {
+      fetchCooldownRef.current = null;
+      fetchSessions();
+    }, 350);
+  };
+
   // ==========================================
   // INITIAL LOAD & GLOBAL DASHBOARD SUBSCRIPTIONS
   // ==========================================
@@ -111,7 +125,7 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     const sessionsChannel = supabase.channel(channelName)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'sessions' },
-        () => fetchSessions() // Reload the queue data
+        () => refreshSessionsSoon() // Reload the queue data
       )
       .subscribe();
 
@@ -119,7 +133,7 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     const messagesChannel = supabase.channel(messagesChannelName)
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages' },
-        () => fetchSessions()
+        () => refreshSessionsSoon()
       )
       .subscribe();
 
@@ -127,7 +141,7 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     const usageChannel = supabase.channel(usageChannelName)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'question_usage' },
-        () => fetchSessions()
+        () => refreshSessionsSoon()
       )
       .subscribe();
 
@@ -156,16 +170,19 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     // Instead, we just quietly refresh the queue list.
     onForegroundMessage((payload) => {
       if (payload.data) {
-        fetchSessions();
+        refreshSessionsSoon();
       }
     });
 
-    const handleFocus = () => fetchSessions();
+    const handleFocus = () => refreshSessionsSoon();
     window.addEventListener('focus', handleFocus);
 
     // Cleanup subscription on unmount
     return () => {
       window.removeEventListener('focus', handleFocus);
+      if (fetchCooldownRef.current) {
+        window.clearTimeout(fetchCooldownRef.current);
+      }
       supabase.removeChannel(sessionsChannel);
       supabase.removeChannel(messagesChannel);
       supabase.removeChannel(usageChannel);
@@ -176,6 +193,13 @@ export default function ExpertDashboardPage({ user, onLogout }) {
    * Helper to pull the latest session list from Supabase
    */
   const fetchSessions = async () => {
+    if (fetchInFlightRef.current) {
+      fetchQueuedRef.current = true;
+      return;
+    }
+
+    fetchInFlightRef.current = true;
+
     try {
       const { sessions } = await apiService.getExpertSessions();
       setSessionsList(sessions || []);
@@ -183,6 +207,10 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     } catch (err) {
       console.error("Error fetching enriched queue:", err);
       setQueueError(err.message || 'Failed to load enriched queue data.');
+
+      if (/too many requests/i.test(err.message || '')) {
+        return;
+      }
 
       try {
         const { data, error } = await supabase
@@ -197,7 +225,13 @@ export default function ExpertDashboardPage({ user, onLogout }) {
         setSessionsList([]);
       }
     } finally {
+      fetchInFlightRef.current = false;
       setIsLoadingQueue(false);
+
+      if (fetchQueuedRef.current) {
+        fetchQueuedRef.current = false;
+        refreshSessionsSoon();
+      }
     }
   };
 
@@ -230,6 +264,48 @@ export default function ExpertDashboardPage({ user, onLogout }) {
       setActiveSession(openedSession);
     } catch (err) {
       alert("Error opening session: " + err.message);
+    }
+  };
+
+  const handleUnclaimSession = async () => {
+    if (!activeSession) return;
+
+    const confirmed = window.confirm('Return this chat to the unclaimed queue so another advisor can respond?');
+    if (!confirmed) return;
+
+    const actionKey = `unclaim:${activeSession.id}`;
+    if (pendingActions[actionKey]) return;
+
+    try {
+      setPendingActions((prev) => ({ ...prev, [actionKey]: true }));
+      await apiService.unclaimSession(activeSession.id);
+      setActiveSession(null);
+      setActiveTab('unclaimed');
+      fetchSessions();
+    } catch (err) {
+      alert(err.message || 'Failed to unclaim session.');
+    } finally {
+      setPendingActions((prev) => ({ ...prev, [actionKey]: false }));
+    }
+  };
+
+  const handleQuestionAdjustment = async (event, session, delta) => {
+    event.stopPropagation();
+
+    const actionKey = `questions:${session.student_id}`;
+    if (pendingActions[actionKey]) return;
+
+    try {
+      setPendingActions((prev) => ({ ...prev, [actionKey]: true }));
+      await apiService.adjustQuestionAllowance({
+        studentId: session.student_id,
+        delta,
+      });
+      fetchSessions();
+    } catch (err) {
+      alert(err.message || 'Failed to adjust question allowance.');
+    } finally {
+      setPendingActions((prev) => ({ ...prev, [actionKey]: false }));
     }
   };
 
@@ -329,14 +405,22 @@ export default function ExpertDashboardPage({ user, onLogout }) {
                 )}
               </div>
             </div>
-            <button onClick={onLogout} className="flex items-center gap-2 text-slate-600 hover:text-blue-700 text-sm font-semibold px-5 py-2.5 border border-slate-300 hover:border-blue-300 hover:bg-blue-100 rounded-xl transition-all bg-white shadow-sm hover:shadow-md">
-              <LogOut size={16}/> Sign Out
-            </button>
+            <div className="flex items-center gap-2">
+              <Link
+                to="/"
+                className="flex items-center gap-2 text-slate-600 hover:text-blue-700 text-sm font-semibold px-5 py-2.5 border border-slate-300 hover:border-blue-300 hover:bg-blue-100 rounded-xl transition-all bg-white shadow-sm hover:shadow-md"
+              >
+                <Home size={16}/> Home
+              </Link>
+              <button onClick={onLogout} className="flex items-center gap-2 text-slate-600 hover:text-blue-700 text-sm font-semibold px-5 py-2.5 border border-slate-300 hover:border-blue-300 hover:bg-blue-100 rounded-xl transition-all bg-white shadow-sm hover:shadow-md">
+                <LogOut size={16}/> Sign Out
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-2 mb-6">
             {QUEUE_TABS.map((tab) => (
-              <button
+            <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
                 className={`px-4 py-2 rounded-xl text-sm font-semibold border transition-all ${
@@ -387,6 +471,7 @@ export default function ExpertDashboardPage({ user, onLogout }) {
                 const unreadCount = getUnreadCount(s);
                 const isMine = s.expert_id === user.id;
                 const isClaimedByOther = s.expert_id && !isMine;
+                const isAdjustingQuestions = Boolean(pendingActions[`questions:${s.student_id}`]);
 
                 return (
                 <div 
@@ -452,6 +537,29 @@ export default function ExpertDashboardPage({ user, onLogout }) {
                       {s.has_active_membership && s.membership_tier ? ` • ${s.membership_tier}` : ''}
                       {s.billing_interval ? ` ${s.billing_interval}` : ''}
                     </p>
+                    {s.has_active_membership && !s.has_unlimited_questions && (
+                      <div className="mb-3 flex items-center gap-2">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Adjust</span>
+                        <button
+                          type="button"
+                          onClick={(event) => handleQuestionAdjustment(event, s, -1)}
+                          disabled={isAdjustingQuestions}
+                          className="h-7 w-7 rounded-full border border-slate-200 bg-white text-sm font-bold text-slate-600 hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label="Remove one weekly question"
+                        >
+                          -
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => handleQuestionAdjustment(event, s, 1)}
+                          disabled={isAdjustingQuestions}
+                          className="h-7 w-7 rounded-full border border-slate-200 bg-white text-sm font-bold text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label="Add one weekly question"
+                        >
+                          +
+                        </button>
+                      </div>
+                    )}
                     <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                       Last message{s.last_message_sender_type ? ` from ${s.last_message_sender_type}` : ''}
                     </p>
@@ -507,9 +615,20 @@ export default function ExpertDashboardPage({ user, onLogout }) {
               </div>
             </div>
           </div>
-          <button onClick={() => setActiveSession(null)} className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white px-3 py-1.5 border border-slate-700 hover:bg-slate-800 rounded-lg transition-all shadow-sm">
-            ← Dashboard
-          </button>
+          <div className="flex items-center gap-2">
+            {activeSession.expert_id === user.id && (
+              <button
+                onClick={handleUnclaimSession}
+                disabled={Boolean(pendingActions[`unclaim:${activeSession.id}`])}
+                className="flex items-center gap-1.5 text-xs font-semibold text-amber-200 hover:text-white px-3 py-1.5 border border-amber-500/30 hover:bg-amber-500/10 rounded-lg transition-all shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Unclaim
+              </button>
+            )}
+            <button onClick={() => setActiveSession(null)} className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white px-3 py-1.5 border border-slate-700 hover:bg-slate-800 rounded-lg transition-all shadow-sm">
+              ← Dashboard
+            </button>
+          </div>
         </div>
 
         {/* Messages */}

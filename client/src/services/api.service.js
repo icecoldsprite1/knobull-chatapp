@@ -48,7 +48,12 @@ const fetchWithAuth = async (endpoint, options = {}) => {
     try {
       data = JSON.parse(responseText);
     } catch {
-      data = { error: responseText.slice(0, 160) };
+      const looksLikeHtml = /^\s*<!doctype html/i.test(responseText) || /^\s*<html/i.test(responseText);
+      data = {
+        error: looksLikeHtml
+          ? `Backend returned HTML instead of JSON for ${endpoint}. Confirm the API server has the latest routes deployed and that API routing is configured correctly.`
+          : responseText.slice(0, 160)
+      };
     }
   }
 
@@ -85,6 +90,26 @@ export const apiService = {
     return fetchWithAuth('/claim-session', {
       method: 'POST',
       body: JSON.stringify({ sessionId })
+    });
+  },
+
+  /**
+   * Returns an assigned session to the unclaimed queue.
+   */
+  unclaimSession: async (sessionId) => {
+    return fetchWithAuth('/unclaim-session', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId })
+    });
+  },
+
+  /**
+   * Adds/removes one weekly question from a student's allowance.
+   */
+  adjustQuestionAllowance: async ({ studentId, delta }) => {
+    return fetchWithAuth('/adjust-question-allowance', {
+      method: 'POST',
+      body: JSON.stringify({ studentId, delta })
     });
   },
 

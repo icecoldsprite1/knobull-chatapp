@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen, ShieldCheck, Send, Library, LogOut, MessageCircle, CreditCard, AlertTriangle, X } from 'lucide-react';
+import { BookOpen, ShieldCheck, Send, Library, LogOut, MessageCircle, CreditCard, AlertTriangle, X, Users, Settings } from 'lucide-react';
 import LoginForm from '../components/LoginForm';
 import PayPalSubscriptionButton from '../components/PayPalSubscriptionButton';
 import { supabase } from '../config/supabase';
@@ -368,11 +368,11 @@ export default function LandingPage({ user, isAdmin }) {
 
           <button
             onClick={() => {
-              document.getElementById(hasActiveMembership ? 'member-home' : 'preview-chat')?.scrollIntoView({ behavior: 'smooth' });
+              document.getElementById(isAdmin || hasActiveMembership ? 'member-home' : 'preview-chat')?.scrollIntoView({ behavior: 'smooth' });
             }}
             className="px-8 py-3 bg-white text-blue-600 font-bold rounded-xl shadow-lg hover:bg-gray-50 transition-all duration-300"
           >
-            {hasActiveMembership ? 'Go to membership' : 'Get started'}
+            {isAdmin ? 'Go to admin panel' : hasActiveMembership ? 'Go to membership' : 'Get started'}
           </button>
         </div>
       </section>
@@ -385,7 +385,58 @@ export default function LandingPage({ user, isAdmin }) {
           </h2>
 
           <div className="bg-white rounded-2xl border border-gray-200 shadow-lg shadow-gray-900/5 p-6 md:p-8 space-y-6">
-            {hasActiveMembership ? (
+            {isAdmin ? (
+              <>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-600">Staff access</p>
+                      <h3 className="mt-1 text-xl font-bold text-slate-950">Admin account detected</h3>
+                      <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                        You are signed in as a Knobull advisor. Subscription checkout is hidden for staff accounts.
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wide text-slate-700">
+                      Advisor
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => navigate('/dashboard')}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-slate-900/20 transition hover:bg-slate-800"
+                    >
+                      <Users size={16} />
+                      Open Advisor Dashboard
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSignOut}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                    >
+                      <LogOut size={16} />
+                      Sign Out
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">Review queue</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-gray-600">View mine, unclaimed, and claimed student sessions.</p>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">Respond to students</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-gray-600">Claim active chats and reply from the advisor dashboard.</p>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">Manage access</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-gray-600">Adjust question allowances and return chats to the unclaimed queue.</p>
+                  </div>
+                </div>
+              </>
+            ) : hasActiveMembership ? (
               <>
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -607,7 +658,7 @@ export default function LandingPage({ user, isAdmin }) {
       </section>
 
       {/* ===================== GUEST PREVIEW CHAT ===================== */}
-      {!hasActiveMembership && (
+      {!hasActiveMembership && !isAdmin && (
         <section id="preview-chat" className="w-full bg-gray-50 py-10 md:py-14 border-b border-gray-200">
         <div className="max-w-2xl mx-auto px-6">
           <h2 className="text-2xl md:text-3xl font-bold text-gray-900 text-center mb-2 tracking-tight">

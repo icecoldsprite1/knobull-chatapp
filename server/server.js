@@ -57,11 +57,12 @@ app.use(cors({
   credentials: true,
 }));
 
-// Rate Limiting: Prevent abuse by limiting each IP to 100 API requests per 15 minutes.
-// This protects against brute-force attacks, spam session creation, and notification flooding.
+// Rate Limiting: Prevent abuse without breaking the real-time advisor dashboard.
+// The dashboard legitimately refetches after session/message/usage events, so this
+// needs enough headroom for bursts while still blocking sustained abuse.
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,  // 15 minute window
-  max: 100,                   // Max 100 requests per window per IP
+  max: 600,                   // Max 600 requests per window per IP
   standardHeaders: true,      // Return rate limit info in `RateLimit-*` headers
   legacyHeaders: false,       // Disable the `X-RateLimit-*` headers
   message: { error: 'Too many requests. Please try again later.' },
@@ -90,6 +91,10 @@ app.use(express.json({ limit: '10kb' }));
 // routes (like /health) to exist without requiring authentication.
 app.use('/api', apiRoutes);
 app.use('/.netlify/functions/api', apiRoutes);
+
+app.use(['/api', '/.netlify/functions/api'], (req, res) => {
+  res.status(404).json({ error: `API route not found: ${req.method} ${req.originalUrl}` });
+});
 
 /**
  * Basic health check endpoint used by deployment platforms (Render, Heroku) 

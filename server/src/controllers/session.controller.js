@@ -328,8 +328,95 @@ const claimSession = async (req, res) => {
   }
 };
 
+const unclaimSession = async (req, res) => {
+  const expertId = req.user.sub;
+  const { sessionId } = req.body;
+
+  if (!sessionId || !UUID_REGEX.test(sessionId)) {
+    return res.status(400).json({ error: 'Invalid session ID format' });
+  }
+
+  try {
+    await assertAdmin(expertId);
+
+    const { data: session, error } = await supabase
+      .from('sessions')
+      .update({ expert_id: null })
+      .eq('id', sessionId)
+      .eq('expert_id', expertId)
+      .select()
+      .single();
+
+    if (error || !session) {
+      return res.status(400).json({ error: 'Only the assigned advisor can unclaim this session.' });
+    }
+
+    res.json({ session, message: 'Session returned to the unclaimed queue.' });
+  } catch (error) {
+    console.error('Session unclaim error:', error);
+    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to unclaim session.' });
+  }
+};
+
+const adjustQuestionAllowance = async (req, res) => {
+  const adminId = req.user.sub;
+  const { studentId, delta } = req.body;
+  const adjustment = Number(delta);
+
+  if (!studentId || !UUID_REGEX.test(studentId)) {
+    return res.status(400).json({ error: 'Invalid student ID format.' });
+  }
+
+  if (!Number.isInteger(adjustment) || ![-1, 1].includes(adjustment)) {
+    return res.status(400).json({ error: 'Question adjustment must be +1 or -1.' });
+  }
+
+  try {
+    await assertAdmin(adminId);
+
+    const { data: membership, error: membershipError } = await supabase
+      .from('memberships')
+      .select('*')
+      .eq('user_id', studentId)
+      .maybeSingle();
+
+    if (membershipError) {
+      console.error('Membership adjustment lookup error:', membershipError);
+      return res.status(500).json({ error: 'Failed to load membership.' });
+    }
+
+    if (!membership || !hasActiveMembership(membership)) {
+      return res.status(400).json({ error: 'Student does not have an active membership.' });
+    }
+
+    if (membership.question_limit_weekly == null) {
+      return res.status(400).json({ error: 'Unlimited members do not need question adjustments.' });
+    }
+
+    const nextLimit = Math.max(0, membership.question_limit_weekly + adjustment);
+    const { data: updatedMembership, error: updateError } = await supabase
+      .from('memberships')
+      .update({ question_limit_weekly: nextLimit })
+      .eq('user_id', studentId)
+      .select()
+      .single();
+
+    if (updateError) {
+      console.error('Membership adjustment update error:', updateError);
+      return res.status(500).json({ error: 'Failed to update question allowance.' });
+    }
+
+    res.json({ membership: updatedMembership });
+  } catch (error) {
+    console.error('Question allowance adjustment error:', error);
+    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to adjust question allowance.' });
+  }
+};
+
 module.exports = {
   createSession,
   listExpertSessions,
-  claimSession
+  claimSession,
+  unclaimSession,
+  adjustQuestionAllowance
 };

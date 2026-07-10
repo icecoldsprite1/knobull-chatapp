@@ -9,7 +9,13 @@ const express = require('express');
 const router = express.Router();
 
 // Import controllers
-const { createSession, listExpertSessions, claimSession } = require('../controllers/session.controller');
+const {
+  createSession,
+  listExpertSessions,
+  claimSession,
+  unclaimSession,
+  adjustQuestionAllowance,
+} = require('../controllers/session.controller');
 const { handleBotCheck } = require('../controllers/bot.controller');
 const { registerDevice } = require('../controllers/notification.controller');
 const { sendMessage } = require('../controllers/message.controller');
@@ -54,6 +60,18 @@ router.get('/expert-sessions', listExpertSessions);
  * Caller: ExpertDashboardPage.jsx
  */
 router.post('/claim-session', claimSession);
+
+/**
+ * Lets the assigned expert return their session to the unclaimed queue.
+ * Caller: ExpertDashboardPage.jsx
+ */
+router.post('/unclaim-session', unclaimSession);
+
+/**
+ * Lets admins add or remove one weekly question from a student's allowance.
+ * Caller: ExpertDashboardPage.jsx
+ */
+router.post('/adjust-question-allowance', adjustQuestionAllowance);
 
 /**
  * Called every time a student sends a message. Central hub for bot logic.
