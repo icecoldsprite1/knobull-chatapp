@@ -1,6 +1,10 @@
 const { createClient } = require('@supabase/supabase-js');
 const { GUIDE_SCRIPT } = require('../utils/constants');
-const { requireActiveMembership } = require('../services/membership.service');
+const {
+  getWeekStart,
+  hasActiveMembership,
+  requireActiveMembership,
+} = require('../services/membership.service');
 
 // Initialize the Admin Supabase client in the controller context
 const supabase = createClient(
@@ -153,6 +157,7 @@ const listExpertSessions = async (req, res) => {
     }
 
     const sessionIds = sessions.map((session) => session.id);
+    const studentIds = [...new Set(sessions.map((session) => session.student_id))];
     const { data: messages, error: messagesError } = await supabase
       .from('messages')
       .select('id, session_id, sender_type, content, created_at')
@@ -165,6 +170,34 @@ const listExpertSessions = async (req, res) => {
       return res.status(500).json({ error: 'Failed to load session message summaries.' });
     }
 
+    const { data: memberships, error: membershipsError } = await supabase
+      .from('memberships')
+      .select('*')
+      .in('user_id', studentIds);
+
+    if (membershipsError) {
+      console.error('Expert membership summary error:', membershipsError);
+      return res.status(500).json({ error: 'Failed to load membership summaries.' });
+    }
+
+    const weekStart = getWeekStart();
+    const { data: questionUsage, error: questionUsageError } = await supabase
+      .from('question_usage')
+      .select('user_id')
+      .in('user_id', studentIds)
+      .eq('week_start', weekStart);
+
+    if (questionUsageError) {
+      console.error('Expert question usage summary error:', questionUsageError);
+      return res.status(500).json({ error: 'Failed to load question usage summaries.' });
+    }
+
+    const membershipByUser = new Map((memberships || []).map((membership) => [membership.user_id, membership]));
+    const usageByUser = new Map();
+    for (const usage of questionUsage || []) {
+      usageByUser.set(usage.user_id, (usageByUser.get(usage.user_id) || 0) + 1);
+    }
+
     const summaryBySession = new Map();
 
     for (const message of messages || []) {
@@ -172,6 +205,8 @@ const listExpertSessions = async (req, res) => {
         lastMessage: null,
         studentMessageCount: 0,
         lastStudentMessageAt: null,
+        pendingStudentMessageCount: 0,
+        expertReplySeen: false,
       };
 
       if (!summary.lastMessage) {
@@ -183,6 +218,14 @@ const listExpertSessions = async (req, res) => {
         if (!summary.lastStudentMessageAt) {
           summary.lastStudentMessageAt = message.created_at;
         }
+
+        if (!summary.expertReplySeen) {
+          summary.pendingStudentMessageCount += 1;
+        }
+      }
+
+      if (message.sender_type === 'expert') {
+        summary.expertReplySeen = true;
       }
 
       summaryBySession.set(message.session_id, summary);
@@ -194,20 +237,51 @@ const listExpertSessions = async (req, res) => {
       const summary = summaryBySession.get(session.id) || {};
       const lastMessage = summary.lastMessage || null;
       const lastActivityAt = lastMessage?.created_at || session.created_at;
+      const membership = membershipByUser.get(session.student_id) || null;
+      const isActiveMember = hasActiveMembership(membership);
+      const questionsUsedWeekly = usageByUser.get(session.student_id) || 0;
+      const questionLimitWeekly = membership?.question_limit_weekly ?? null;
+      const questionsRemainingWeekly = questionLimitWeekly == null
+        ? null
+        : Math.max(questionLimitWeekly - questionsUsedWeekly, 0);
+      const hasUnlimitedQuestions = isActiveMember && questionLimitWeekly == null;
+      const pendingStudentMessages = summary.pendingStudentMessageCount || 0;
+      const needsAdvisorReply = isActiveMember && pendingStudentMessages > 0;
 
       return {
         ...session,
         ...student,
+        has_active_membership: isActiveMember,
+        membership_status: membership?.status || null,
+        membership_tier: membership?.tier || null,
+        membership_plan_key: membership?.plan_key || null,
+        billing_interval: membership?.billing_interval || null,
+        question_limit_weekly: questionLimitWeekly,
+        questions_used_weekly: questionsUsedWeekly,
+        questions_remaining_weekly: questionsRemainingWeekly,
+        has_unlimited_questions: hasUnlimitedQuestions,
         last_message_preview: summarizeContent(lastMessage?.content),
         last_message_sender_type: lastMessage?.sender_type || null,
         last_message_created_at: lastMessage?.created_at || null,
         last_student_message_at: summary.lastStudentMessageAt || null,
         student_message_count: summary.studentMessageCount || 0,
+        pending_student_messages: pendingStudentMessages,
+        needs_advisor_reply: needsAdvisorReply,
         last_activity_at: lastActivityAt,
       };
     }));
 
-    enrichedSessions.sort((a, b) => new Date(b.last_activity_at) - new Date(a.last_activity_at));
+    enrichedSessions.sort((a, b) => {
+      if (a.needs_advisor_reply !== b.needs_advisor_reply) {
+        return a.needs_advisor_reply ? -1 : 1;
+      }
+
+      if (a.has_active_membership !== b.has_active_membership) {
+        return a.has_active_membership ? -1 : 1;
+      }
+
+      return new Date(b.last_activity_at) - new Date(a.last_activity_at);
+    });
 
     res.json({ sessions: enrichedSessions });
   } catch (error) {

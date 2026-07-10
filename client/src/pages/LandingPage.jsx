@@ -217,10 +217,26 @@ export default function LandingPage({ user, isAdmin }) {
 
     fetchUsage();
 
+    const usageChannel = hasActiveMembership && user?.id
+      ? supabase.channel(`membership_usage_${user.id}_${Date.now()}`)
+        .on('postgres_changes',
+          { event: '*', schema: 'public', table: 'question_usage', filter: `user_id=eq.${user.id}` },
+          () => fetchUsage()
+        )
+        .subscribe()
+      : null;
+
+    const handleFocus = () => fetchUsage();
+    window.addEventListener('focus', handleFocus);
+
     return () => {
       isCancelled = true;
+      window.removeEventListener('focus', handleFocus);
+      if (usageChannel) {
+        supabase.removeChannel(usageChannel);
+      }
     };
-  }, [hasActiveMembership, membership?.updated_at]);
+  }, [hasActiveMembership, membership?.updated_at, user?.id]);
 
   const requestPlanChange = (planKey) => {
     setBillingError('');

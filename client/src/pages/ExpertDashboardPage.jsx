@@ -81,6 +81,22 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     return sessionsList.filter((s) => s.expert_id && s.expert_id !== user.id);
   }, [activeTab, sessionsList, user.id]);
 
+  const getMembershipLabel = (session) => {
+    if (!session.has_active_membership) {
+      return 'No active membership';
+    }
+
+    if (session.has_unlimited_questions) {
+      return 'Unlimited questions';
+    }
+
+    if (session.questions_remaining_weekly == null) {
+      return 'Membership active';
+    }
+
+    return `${session.questions_used_weekly || 0} used / ${session.questions_remaining_weekly} left this week`;
+  };
+
   // ==========================================
   // INITIAL LOAD & GLOBAL DASHBOARD SUBSCRIPTIONS
   // ==========================================
@@ -103,6 +119,14 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     const messagesChannel = supabase.channel(messagesChannelName)
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages' },
+        () => fetchSessions()
+      )
+      .subscribe();
+
+    const usageChannelName = `question_usage_queue_${Date.now()}`;
+    const usageChannel = supabase.channel(usageChannelName)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'question_usage' },
         () => fetchSessions()
       )
       .subscribe();
@@ -136,10 +160,15 @@ export default function ExpertDashboardPage({ user, onLogout }) {
       }
     });
 
+    const handleFocus = () => fetchSessions();
+    window.addEventListener('focus', handleFocus);
+
     // Cleanup subscription on unmount
     return () => {
+      window.removeEventListener('focus', handleFocus);
       supabase.removeChannel(sessionsChannel);
       supabase.removeChannel(messagesChannel);
+      supabase.removeChannel(usageChannel);
     };
   }, []);
 
@@ -270,6 +299,7 @@ export default function ExpertDashboardPage({ user, onLogout }) {
         sessionId: activeSession.id,
         content,
       });
+      fetchSessions();
     } catch (err) {
       alert(err.message || "Message blocked by Database Security Policies.");
     }
@@ -397,6 +427,31 @@ export default function ExpertDashboardPage({ user, onLogout }) {
                   </div>
 
                   <div className="mb-4 min-h-[52px]">
+                    <div className="flex flex-wrap items-center gap-2 mb-3">
+                      {s.needs_advisor_reply && (
+                        <span className="text-[11px] font-bold uppercase tracking-wider rounded-full bg-red-50 text-red-700 border border-red-200 px-2.5 py-1">
+                          Needs reply
+                        </span>
+                      )}
+                      <span className={`text-[11px] font-bold uppercase tracking-wider rounded-full border px-2.5 py-1 ${
+                        s.has_active_membership
+                          ? s.has_unlimited_questions
+                            ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-slate-50 text-slate-500 border-slate-200'
+                      }`}>
+                        {s.has_active_membership
+                          ? s.has_unlimited_questions
+                            ? 'Unlimited'
+                            : 'Member'
+                          : 'No membership'}
+                      </span>
+                    </div>
+                    <p className="text-xs font-semibold text-slate-600 mb-3">
+                      {getMembershipLabel(s)}
+                      {s.has_active_membership && s.membership_tier ? ` • ${s.membership_tier}` : ''}
+                      {s.billing_interval ? ` ${s.billing_interval}` : ''}
+                    </p>
                     <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                       Last message{s.last_message_sender_type ? ` from ${s.last_message_sender_type}` : ''}
                     </p>
@@ -459,7 +514,7 @@ export default function ExpertDashboardPage({ user, onLogout }) {
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-slate-50/50">
-          {messages.map((m, i) => <ChatBubble key={i} message={m} />)}
+          {messages.map((m, i) => <ChatBubble key={i} message={m} viewerRole="expert" />)}
           <div ref={bottomRef} />
         </div>
 
