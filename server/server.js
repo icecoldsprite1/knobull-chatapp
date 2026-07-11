@@ -83,6 +83,28 @@ app.post('/.netlify/functions/api/paypal-webhook', express.raw({ type: 'applicat
 // Parse incoming payloads with JSON payloads automatically to `req.body`.
 app.use(express.json({ limit: '10kb' }));
 
+// Under serverless-http (Netlify Functions) + Express 5, the JSON body can
+// arrive as a raw Buffer that express.json() leaves unparsed, so controllers
+// see req.body.sessionId === undefined. Normalize any Buffer body into parsed
+// JSON so behavior matches a plain Node HTTP server. (The PayPal webhook route
+// is registered before express.json and handles its own raw body, so it is
+// unaffected by this.)
+app.use((req, res, next) => {
+  if (Buffer.isBuffer(req.body)) {
+    const text = req.body.toString('utf8').trim();
+    if (!text) {
+      req.body = {};
+      return next();
+    }
+    try {
+      req.body = JSON.parse(text);
+    } catch (err) {
+      return res.status(400).json({ error: 'Invalid JSON body.' });
+    }
+  }
+  next();
+});
+
 // ==========================================
 // 2. ROUTING
 // ==========================================
