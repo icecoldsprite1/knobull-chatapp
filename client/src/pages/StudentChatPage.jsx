@@ -159,8 +159,44 @@ export default function StudentChatPage({ user, onLogout }) {
       )
       .subscribe();
 
+    // Safety-net poll. Realtime postgres_changes delivery to authenticated
+    // (non-admin) student subscribers is unreliable under RLS in this project,
+    // so poll this one session's messages while the chat is open. Cheap: a
+    // single session, and it only re-renders when the message list changes.
+    const pollSession = async () => {
+      const [{ data: msgs }, { data: sess }] = await Promise.all([
+        supabase
+          .from('messages')
+          .select('*')
+          .eq('session_id', session.id)
+          .order('created_at', { ascending: true }),
+        supabase
+          .from('sessions')
+          .select('status')
+          .eq('id', session.id)
+          .maybeSingle(),
+      ]);
+
+      if (isCancelled) return;
+
+      if (msgs) {
+        setMessages((prev) => {
+          if (prev.length === msgs.length && msgs.every((m, i) => prev[i]?.id === m.id)) {
+            return prev; // no change — avoid a needless re-render
+          }
+          return msgs;
+        });
+      }
+
+      // Realtime resolution events are also unreliable for the student, so
+      // detect a resolved session here too.
+      if (sess?.status === 'resolved') setResolved(true);
+    };
+    const pollId = window.setInterval(pollSession, 3000);
+
     return () => {
       isCancelled = true;
+      window.clearInterval(pollId);
       supabase.removeChannel(channel);
     };
   }, [session]);
