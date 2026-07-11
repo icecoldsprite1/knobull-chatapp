@@ -27,7 +27,12 @@ const isOpenSession = (s) => s.status !== 'resolved';
  */
 export default function ExpertDashboardPage({ user, onLogout }) {
   // --- STATE DEFINITIONS ---
-  const [sessionsList, setSessionsList] = useState([]); // List of all active/historical rooms
+  const [sessionsList, setSessionsList] = useState([]); // OPEN sessions (active queue)
+  const [resolvedSessions, setResolvedSessions] = useState([]); // paginated resolved history
+  const [resolvedCount, setResolvedCount] = useState(0);
+  const [resolvedCursor, setResolvedCursor] = useState(null);
+  const [resolvedHasMore, setResolvedHasMore] = useState(false);
+  const [resolvedLoading, setResolvedLoading] = useState(false);
   const [isLoadingQueue, setIsLoadingQueue] = useState(true); // Prevents "Queue is empty" flash
   const [activeSession, setActiveSession] = useState(null); // The room currently open in the Chat View
   const [messages, setMessages] = useState([]); // Messages for the active session
@@ -65,35 +70,36 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     }));
   };
 
+  // sessionsList holds only OPEN sessions; resolved history is fetched separately.
   const tabCounts = useMemo(() => ({
-    mine: sessionsList.filter((s) => isOpenSession(s) && s.expert_id === user.id).length,
-    unclaimed: sessionsList.filter((s) => isOpenSession(s) && !s.expert_id).length,
-    claimed: sessionsList.filter((s) => isOpenSession(s) && s.expert_id && s.expert_id !== user.id).length,
-    resolved: sessionsList.filter((s) => !isOpenSession(s)).length,
-  }), [sessionsList, user.id]);
+    mine: sessionsList.filter((s) => s.expert_id === user.id).length,
+    unclaimed: sessionsList.filter((s) => !s.expert_id).length,
+    claimed: sessionsList.filter((s) => s.expert_id && s.expert_id !== user.id).length,
+    resolved: resolvedCount,
+  }), [sessionsList, resolvedCount, user.id]);
 
   const mineUnreadTotal = useMemo(() => (
     sessionsList.reduce((total, session) => {
-      if (!isOpenSession(session) || session.expert_id !== user.id) return total;
+      if (session.expert_id !== user.id) return total;
       return total + Math.max(0, (session.student_message_count || 0) - (readCounts[session.id] || 0));
     }, 0)
   ), [sessionsList, readCounts, user.id]);
 
   const filteredSessions = useMemo(() => {
+    if (activeTab === 'resolved') {
+      return resolvedSessions;
+    }
+
     if (activeTab === 'mine') {
-      return sessionsList.filter((s) => isOpenSession(s) && s.expert_id === user.id);
+      return sessionsList.filter((s) => s.expert_id === user.id);
     }
 
     if (activeTab === 'unclaimed') {
-      return sessionsList.filter((s) => isOpenSession(s) && !s.expert_id);
+      return sessionsList.filter((s) => !s.expert_id);
     }
 
-    if (activeTab === 'resolved') {
-      return sessionsList.filter((s) => !isOpenSession(s));
-    }
-
-    return sessionsList.filter((s) => isOpenSession(s) && s.expert_id && s.expert_id !== user.id);
-  }, [activeTab, sessionsList, user.id]);
+    return sessionsList.filter((s) => s.expert_id && s.expert_id !== user.id);
+  }, [activeTab, sessionsList, resolvedSessions, user.id]);
 
   const getMembershipLabel = (session) => {
     if (session.has_unlimited_sessions) {
@@ -124,22 +130,16 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     // 1. Fetch initial queue list on load
     fetchSessions();
 
-    // 2. Subscribe to Global Queue Changes (Realtime)
-    // Listens to ANY change on the `sessions` table (new student, expert claiming).
-    // This allows the dashboard list to auto-update without hitting refresh.
+    // 2. Subscribe to Queue Changes (Realtime).
+    // A DB trigger updates the session row's denormalized message summary on
+    // every message insert, so listening to `sessions` alone captures new
+    // students, claims, resolutions, AND new-message previews — no separate
+    // (noisy) global messages subscription needed. The refetch is debounced.
     const channelName = `sessions_queue_${Date.now()}`;
     const sessionsChannel = supabase.channel(channelName)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'sessions' },
         () => refreshSessionsSoon() // Reload the queue data
-      )
-      .subscribe();
-
-    const messagesChannelName = `messages_queue_${Date.now()}`;
-    const messagesChannel = supabase.channel(messagesChannelName)
-      .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages' },
-        () => refreshSessionsSoon()
       )
       .subscribe();
 
@@ -182,9 +182,16 @@ export default function ExpertDashboardPage({ user, onLogout }) {
         window.clearTimeout(fetchCooldownRef.current);
       }
       supabase.removeChannel(sessionsChannel);
-      supabase.removeChannel(messagesChannel);
     };
   }, []);
+
+  // Load the resolved history when the advisor opens the Resolved tab.
+  useEffect(() => {
+    if (activeTab === 'resolved') {
+      fetchResolved({ reset: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   /**
    * Helper to pull the latest session list from Supabase
@@ -198,8 +205,9 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     fetchInFlightRef.current = true;
 
     try {
-      const { sessions } = await apiService.getExpertSessions();
+      const { sessions, resolvedCount: resolved } = await apiService.getExpertSessions();
       setSessionsList(sessions || []);
+      setResolvedCount(resolved || 0);
       setQueueError(null);
     } catch (err) {
       console.error("Error fetching enriched queue:", err);
@@ -213,7 +221,8 @@ export default function ExpertDashboardPage({ user, onLogout }) {
         const { data, error } = await supabase
           .from('sessions')
           .select('*')
-          .order('created_at', { ascending: false });
+          .eq('status', 'open')
+          .order('last_message_at', { ascending: false, nullsFirst: false });
 
         if (error) throw error;
         setSessionsList(data || []);
@@ -229,6 +238,32 @@ export default function ExpertDashboardPage({ user, onLogout }) {
         fetchQueuedRef.current = false;
         refreshSessionsSoon();
       }
+    }
+  };
+
+  /**
+   * Loads the resolved history (paginated). `reset` starts from the newest page;
+   * otherwise it appends the next page using the current cursor.
+   */
+  const fetchResolved = async ({ reset = false } = {}) => {
+    if (resolvedLoading) return;
+    setResolvedLoading(true);
+
+    try {
+      const cursor = reset ? null : resolvedCursor;
+      const data = await apiService.getExpertSessions({
+        status: 'resolved',
+        cursor: cursor || undefined,
+        limit: 50,
+      });
+      const rows = data.sessions || [];
+      setResolvedSessions((prev) => (reset ? rows : [...prev, ...rows]));
+      setResolvedCursor(data.nextCursor || null);
+      setResolvedHasMore(Boolean(data.nextCursor));
+    } catch (err) {
+      console.error('Error fetching resolved sessions:', err);
+    } finally {
+      setResolvedLoading(false);
     }
   };
 
@@ -488,6 +523,8 @@ export default function ExpertDashboardPage({ user, onLogout }) {
                   ? 'Sessions you claim will appear here.'
                   : activeTab === 'unclaimed'
                   ? 'New student requests will appear here automatically.'
+                  : activeTab === 'resolved'
+                  ? 'Chats you resolve will appear here.'
                   : 'Sessions claimed by other advisors will appear here.'}
               </p>
             </div>
@@ -612,6 +649,19 @@ export default function ExpertDashboardPage({ user, onLogout }) {
                   </div>
                 </div>
               )})}
+            </div>
+          )}
+
+          {activeTab === 'resolved' && (resolvedHasMore || resolvedLoading) && (
+            <div className="mt-6 flex justify-center">
+              <button
+                type="button"
+                onClick={() => fetchResolved({ reset: false })}
+                disabled={resolvedLoading || !resolvedHasMore}
+                className="rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {resolvedLoading ? 'Loading…' : 'Load more'}
+              </button>
             </div>
           )}
         </div>

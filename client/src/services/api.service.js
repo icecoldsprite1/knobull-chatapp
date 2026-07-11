@@ -81,9 +81,16 @@ export const apiService = {
 
   /**
    * Loads enriched advisor queue data.
+   * Default: open sessions + resolvedCount. Pass { status: 'resolved', cursor, limit }
+   * to page through resolved sessions.
    */
-  getExpertSessions: async () => {
-    return fetchWithAuth('/expert-sessions', { method: 'GET' });
+  getExpertSessions: async ({ status, cursor, limit } = {}) => {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    if (cursor) params.set('cursor', cursor);
+    if (limit) params.set('limit', String(limit));
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return fetchWithAuth(`/expert-sessions${query}`, { method: 'GET' });
   },
   
   /**

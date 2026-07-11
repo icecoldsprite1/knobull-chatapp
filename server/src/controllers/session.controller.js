@@ -124,8 +124,16 @@ const assertAdmin = async (userId) => {
   }
 };
 
-const getStudentDisplay = async (studentId, cache) => {
-  if (cache.has(studentId)) return cache.get(studentId);
+// Cross-request cache for student identity so we don't call the Auth Admin API
+// once per student on every dashboard refresh. Bounded by the number of distinct
+// students seen; entries expire so name/email edits eventually propagate.
+const STUDENT_CACHE_TTL_MS = 5 * 60 * 1000;
+const studentDisplayCache = new Map(); // studentId -> { value, expires }
+
+const getStudentDisplay = async (studentId) => {
+  const now = Date.now();
+  const cached = studentDisplayCache.get(studentId);
+  if (cached && cached.expires > now) return cached.value;
 
   const fallback = {
     student_id: studentId,
@@ -137,7 +145,8 @@ const getStudentDisplay = async (studentId, cache) => {
 
   if (error || !data?.user) {
     console.error('Student auth lookup error:', error?.message);
-    cache.set(studentId, fallback);
+    // Cache the fallback briefly so a failing lookup isn't retried on every row.
+    studentDisplayCache.set(studentId, { value: fallback, expires: now + 30 * 1000 });
     return fallback;
   }
 
@@ -150,163 +159,182 @@ const getStudentDisplay = async (studentId, cache) => {
     student_name: name,
   };
 
-  cache.set(studentId, student);
+  studentDisplayCache.set(studentId, { value: student, expires: now + STUDENT_CACHE_TTL_MS });
   return student;
 };
 
-const summarizeContent = (content) => {
-  if (!content) return 'No messages yet.';
-  const compact = content.replace(/\s+/g, ' ').trim();
-  return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
+const RESOLVED_PAGE_DEFAULT = 50;
+const RESOLVED_PAGE_MAX = 100;
+// Safety cap on the active queue. There is at most one OPEN session per student
+// (partial unique index), so this is only ever hit by a very large live load.
+const OPEN_QUEUE_CAP = 300;
+
+/**
+ * Enrich a bounded set of session rows with student identity, membership, and
+ * weekly usage. Uses the denormalized message summary on the session row, so no
+ * scan of the messages table is needed.
+ */
+const enrichSessions = async (sessions) => {
+  if (!sessions.length) return [];
+
+  const studentIds = [...new Set(sessions.map((session) => session.student_id))];
+  const weekStart = getWeekStart();
+
+  const [membershipRes, grantRes, weekRes] = await Promise.all([
+    supabase.from('memberships').select('*').in('user_id', studentIds),
+    supabase.from('weekly_session_grants').select('user_id, bonus').in('user_id', studentIds).eq('week_start', weekStart),
+    supabase.from('sessions').select('student_id').in('student_id', studentIds).eq('week_start', weekStart),
+  ]);
+
+  if (membershipRes.error) {
+    console.error('Expert membership summary error:', membershipRes.error);
+    const err = new Error('Failed to load membership summaries.');
+    err.statusCode = 500;
+    throw err;
+  }
+  if (grantRes.error) {
+    console.error('Expert session grant summary error:', grantRes.error);
+    const err = new Error('Failed to load session grant summaries.');
+    err.statusCode = 500;
+    throw err;
+  }
+  if (weekRes.error) {
+    console.error('Expert weekly usage summary error:', weekRes.error);
+    const err = new Error('Failed to load weekly session usage.');
+    err.statusCode = 500;
+    throw err;
+  }
+
+  const membershipByUser = new Map((membershipRes.data || []).map((m) => [m.user_id, m]));
+  const bonusByUser = new Map((grantRes.data || []).map((g) => [g.user_id, g.bonus]));
+  const usageByUser = new Map();
+  for (const row of weekRes.data || []) {
+    usageByUser.set(row.student_id, (usageByUser.get(row.student_id) || 0) + 1);
+  }
+
+  const students = await Promise.all(studentIds.map((id) => getStudentDisplay(id)));
+  const studentById = new Map(students.map((s) => [s.student_id, s]));
+
+  return sessions.map((session) => {
+    const student = studentById.get(session.student_id) || {
+      student_id: session.student_id,
+      student_email: null,
+      student_name: 'Student',
+    };
+    const membership = membershipByUser.get(session.student_id) || null;
+    const isActiveMember = hasActiveMembership(membership);
+    const tier = getTierLabel(membership);
+    const baseLimit = getBaseWeeklySessionLimit(membership);
+    const bonus = baseLimit == null ? 0 : (bonusByUser.get(session.student_id) || 0);
+    const sessionsUsedWeekly = usageByUser.get(session.student_id) || 0;
+    const sessionLimitWeekly = baseLimit == null ? null : Math.max(0, baseLimit + bonus);
+    const sessionsRemainingWeekly = sessionLimitWeekly == null
+      ? null
+      : Math.max(sessionLimitWeekly - sessionsUsedWeekly, 0);
+    const hasUnlimitedSessions = baseLimit == null;
+    const isResolved = session.status === 'resolved';
+    // "Needs reply" = the latest student message is newer than the latest expert
+    // reply. Robust to guide messages arriving after the student's message.
+    const needsAdvisorReply = !isResolved
+      && !!session.last_student_message_at
+      && (!session.last_expert_reply_at
+        || new Date(session.last_student_message_at) > new Date(session.last_expert_reply_at));
+
+    return {
+      ...session,
+      ...student,
+      tier,
+      has_active_membership: isActiveMember,
+      membership_status: membership?.status || null,
+      membership_tier: membership?.tier || null,
+      membership_plan_key: membership?.plan_key || null,
+      billing_interval: membership?.billing_interval || null,
+      session_limit_weekly: sessionLimitWeekly,
+      sessions_used_weekly: sessionsUsedWeekly,
+      sessions_remaining_weekly: sessionsRemainingWeekly,
+      has_unlimited_sessions: hasUnlimitedSessions,
+      last_message_preview: session.last_message_preview || 'No messages yet.',
+      last_message_sender_type: session.last_message_sender_type || null,
+      last_message_created_at: session.last_message_at || null,
+      last_student_message_at: session.last_student_message_at || null,
+      student_message_count: session.student_message_count || 0,
+      needs_advisor_reply: needsAdvisorReply,
+      last_activity_at: session.last_message_at || session.created_at,
+    };
+  });
 };
 
+/**
+ * Advisor queue.
+ *   GET /expert-sessions                      -> all OPEN sessions + resolvedCount
+ *   GET /expert-sessions?status=resolved&cursor=<iso>&limit=50 -> resolved page
+ * Resolved sessions grow without bound over time, so they are paginated; the
+ * open queue is bounded (<= one open session per student).
+ */
 const listExpertSessions = async (req, res) => {
   const expertId = req.user.sub;
 
   try {
     await assertAdmin(expertId);
 
-    const { data: sessions, error: sessionsError } = await supabase
+    const status = req.query.status === 'resolved' ? 'resolved' : 'open';
+
+    if (status === 'resolved') {
+      const limit = Math.min(
+        Math.max(parseInt(req.query.limit, 10) || RESOLVED_PAGE_DEFAULT, 1),
+        RESOLVED_PAGE_MAX
+      );
+      const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;
+
+      let query = supabase
+        .from('sessions')
+        .select('*')
+        .eq('status', 'resolved')
+        .order('resolved_at', { ascending: false, nullsFirst: false })
+        .limit(limit + 1);
+
+      if (cursor) {
+        query = query.lt('resolved_at', cursor);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        console.error('Expert resolved session list error:', error);
+        return res.status(500).json({ error: 'Failed to load resolved sessions.' });
+      }
+
+      const rows = data || [];
+      const hasMore = rows.length > limit;
+      const page = hasMore ? rows.slice(0, limit) : rows;
+      const enriched = await enrichSessions(page);
+      const nextCursor = hasMore ? page[page.length - 1].resolved_at : null;
+
+      return res.json({ sessions: enriched, nextCursor });
+    }
+
+    // Active queue: open sessions only (bounded).
+    const { data: openRows, error: openError } = await supabase
       .from('sessions')
       .select('*')
-      .order('created_at', { ascending: false });
+      .eq('status', 'open')
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(OPEN_QUEUE_CAP);
 
-    if (sessionsError) {
-      console.error('Expert session list error:', sessionsError);
+    if (openError) {
+      console.error('Expert session list error:', openError);
       return res.status(500).json({ error: 'Failed to load sessions.' });
     }
 
-    if (!sessions?.length) {
-      return res.json({ sessions: [] });
+    const { count: resolvedCount, error: countError } = await supabase
+      .from('sessions')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'resolved');
+
+    if (countError) {
+      console.error('Expert resolved count error:', countError);
     }
 
-    const sessionIds = sessions.map((session) => session.id);
-    const studentIds = [...new Set(sessions.map((session) => session.student_id))];
-    const { data: messages, error: messagesError } = await supabase
-      .from('messages')
-      .select('id, session_id, sender_type, content, created_at')
-      .in('session_id', sessionIds)
-      .order('created_at', { ascending: false })
-      .limit(1000);
-
-    if (messagesError) {
-      console.error('Expert message summary error:', messagesError);
-      return res.status(500).json({ error: 'Failed to load session message summaries.' });
-    }
-
-    const { data: memberships, error: membershipsError } = await supabase
-      .from('memberships')
-      .select('*')
-      .in('user_id', studentIds);
-
-    if (membershipsError) {
-      console.error('Expert membership summary error:', membershipsError);
-      return res.status(500).json({ error: 'Failed to load membership summaries.' });
-    }
-
-    const weekStart = getWeekStart();
-    const { data: grants, error: grantsError } = await supabase
-      .from('weekly_session_grants')
-      .select('user_id, bonus')
-      .in('user_id', studentIds)
-      .eq('week_start', weekStart);
-
-    if (grantsError) {
-      console.error('Expert session grant summary error:', grantsError);
-      return res.status(500).json({ error: 'Failed to load session grant summaries.' });
-    }
-
-    const membershipByUser = new Map((memberships || []).map((membership) => [membership.user_id, membership]));
-    const bonusByUser = new Map((grants || []).map((grant) => [grant.user_id, grant.bonus]));
-
-    // Sessions STARTED this week per student = weekly usage against the cap.
-    const sessionsThisWeekByStudent = new Map();
-    for (const session of sessions) {
-      if (session.week_start === weekStart) {
-        sessionsThisWeekByStudent.set(
-          session.student_id,
-          (sessionsThisWeekByStudent.get(session.student_id) || 0) + 1
-        );
-      }
-    }
-
-    const summaryBySession = new Map();
-
-    for (const message of messages || []) {
-      const summary = summaryBySession.get(message.session_id) || {
-        lastMessage: null,
-        studentMessageCount: 0,
-        lastStudentMessageAt: null,
-        pendingStudentMessageCount: 0,
-        expertReplySeen: false,
-      };
-
-      if (!summary.lastMessage) {
-        summary.lastMessage = message;
-      }
-
-      if (message.sender_type === 'student') {
-        summary.studentMessageCount += 1;
-        if (!summary.lastStudentMessageAt) {
-          summary.lastStudentMessageAt = message.created_at;
-        }
-
-        if (!summary.expertReplySeen) {
-          summary.pendingStudentMessageCount += 1;
-        }
-      }
-
-      if (message.sender_type === 'expert') {
-        summary.expertReplySeen = true;
-      }
-
-      summaryBySession.set(message.session_id, summary);
-    }
-
-    const studentCache = new Map();
-    const enrichedSessions = await Promise.all(sessions.map(async (session) => {
-      const student = await getStudentDisplay(session.student_id, studentCache);
-      const summary = summaryBySession.get(session.id) || {};
-      const lastMessage = summary.lastMessage || null;
-      const lastActivityAt = lastMessage?.created_at || session.created_at;
-      const membership = membershipByUser.get(session.student_id) || null;
-      const isActiveMember = hasActiveMembership(membership);
-      const tier = getTierLabel(membership);
-      const baseLimit = getBaseWeeklySessionLimit(membership);
-      const bonus = baseLimit == null ? 0 : (bonusByUser.get(session.student_id) || 0);
-      const sessionsUsedWeekly = sessionsThisWeekByStudent.get(session.student_id) || 0;
-      const sessionLimitWeekly = baseLimit == null ? null : Math.max(0, baseLimit + bonus);
-      const sessionsRemainingWeekly = sessionLimitWeekly == null
-        ? null
-        : Math.max(sessionLimitWeekly - sessionsUsedWeekly, 0);
-      const hasUnlimitedSessions = baseLimit == null;
-      const isResolved = session.status === 'resolved';
-      const pendingStudentMessages = summary.pendingStudentMessageCount || 0;
-      const needsAdvisorReply = !isResolved && pendingStudentMessages > 0;
-
-      return {
-        ...session,
-        ...student,
-        tier,
-        has_active_membership: isActiveMember,
-        membership_status: membership?.status || null,
-        membership_tier: membership?.tier || null,
-        membership_plan_key: membership?.plan_key || null,
-        billing_interval: membership?.billing_interval || null,
-        session_limit_weekly: sessionLimitWeekly,
-        sessions_used_weekly: sessionsUsedWeekly,
-        sessions_remaining_weekly: sessionsRemainingWeekly,
-        has_unlimited_sessions: hasUnlimitedSessions,
-        last_message_preview: summarizeContent(lastMessage?.content),
-        last_message_sender_type: lastMessage?.sender_type || null,
-        last_message_created_at: lastMessage?.created_at || null,
-        last_student_message_at: summary.lastStudentMessageAt || null,
-        student_message_count: summary.studentMessageCount || 0,
-        pending_student_messages: pendingStudentMessages,
-        needs_advisor_reply: needsAdvisorReply,
-        last_activity_at: lastActivityAt,
-      };
-    }));
+    const enrichedSessions = await enrichSessions(openRows || []);
 
     enrichedSessions.sort((a, b) => {
       if (a.needs_advisor_reply !== b.needs_advisor_reply) {
@@ -320,7 +348,7 @@ const listExpertSessions = async (req, res) => {
       return new Date(b.last_activity_at) - new Date(a.last_activity_at);
     });
 
-    res.json({ sessions: enrichedSessions });
+    res.json({ sessions: enrichedSessions, resolvedCount: resolvedCount || 0 });
   } catch (error) {
     console.error('Expert session list error:', error);
     res.status(error.statusCode || 500).json({ error: error.message || 'Failed to load sessions.' });
