@@ -143,7 +143,10 @@ export default function StudentChatPage({ user, onLogout }) {
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages', filter: `session_id=eq.${session.id}` },
         (payload) => {
-          if (!isCancelled) setMessages((prev) => [...prev, payload.new]);
+          if (isCancelled) return;
+          // De-dupe: the sender appends its own message optimistically, and
+          // Realtime may also deliver it.
+          setMessages((prev) => (prev.some((m) => m.id === payload.new.id) ? prev : [...prev, payload.new]));
         }
       )
       .on('postgres_changes',
@@ -178,10 +181,15 @@ export default function StudentChatPage({ user, onLogout }) {
     setInput('');
 
     try {
-      await apiService.sendMessage({
+      const { message } = await apiService.sendMessage({
         sessionId: session.id,
         content,
       });
+      // Show the student's own message immediately rather than waiting on a
+      // Realtime round-trip. De-duped in the INSERT handler by message id.
+      if (message) {
+        setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+      }
     } catch (err) {
       console.error("Message blocked:", err);
       if (err.code === 'SESSION_RESOLVED' || err.status === 409) {
