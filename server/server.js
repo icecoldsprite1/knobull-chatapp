@@ -52,7 +52,9 @@ app.use(cors({
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-    return callback(new Error('Blocked by CORS policy'));
+    const err = new Error('Blocked by CORS policy');
+    err.statusCode = 403;
+    return callback(err);
   },
   credentials: true,
 }));
@@ -102,6 +104,20 @@ app.use(['/api', '/.netlify/functions/api'], (req, res) => {
  */
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
+});
+
+/**
+ * Global error handler.
+ *
+ * Without this, any error passed via next(err) (e.g. the CORS origin check
+ * above) or thrown synchronously in a middleware falls through to Express's
+ * default handler, which responds with an HTML page — breaking every client
+ * call, since api.service.js expects JSON. This guarantees a JSON response
+ * for any request that reaches an error, no matter where it originated.
+ */
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(err.statusCode || 500).json({ error: err.message || 'Internal Server Error' });
 });
 
 // ==========================================
