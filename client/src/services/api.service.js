@@ -21,9 +21,9 @@ const API_URL = import.meta.env.VITE_API_URL || '/api';
  * By using this wrapper, we guarantee that the backend `auth.middleware.js` 
  * accepts our requests.
  */
-const fetchWithAuth = async (endpoint, options = {}) => {
+const sendRequest = async (endpoint, options) => {
   const { data: { session } } = await supabase.auth.getSession();
-  
+
   const headers = {
     'Content-Type': 'application/json',
     ...options.headers,
@@ -35,10 +35,27 @@ const fetchWithAuth = async (endpoint, options = {}) => {
   }
 
   // Hit the NodeJS backend
-  const response = await fetch(`${API_URL}${endpoint}`, {
+  return fetch(`${API_URL}${endpoint}`, {
     ...options,
     headers,
   });
+};
+
+const fetchWithAuth = async (endpoint, options = {}) => {
+  let response = await sendRequest(endpoint, options);
+
+  // Self-heal a stale/expired session. A 401 can mean the cached access token's
+  // session was revoked or expired. Try a single refresh + retry; if the refresh
+  // fails the session is truly dead, so sign out — App's auth listener then sends
+  // the user back to the login screen instead of leaving them stuck on an error.
+  if (response.status === 401) {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (!error && data?.session?.access_token) {
+      response = await sendRequest(endpoint, options);
+    } else {
+      await supabase.auth.signOut().catch(() => {});
+    }
+  }
 
   // Attempt to parse any returned JSON, while preserving useful non-JSON errors.
   const responseText = await response.text();
