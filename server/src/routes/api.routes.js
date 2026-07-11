@@ -14,7 +14,8 @@ const {
   listExpertSessions,
   claimSession,
   unclaimSession,
-  adjustQuestionAllowance,
+  resolveSession,
+  adjustSessionAllowance,
 } = require('../controllers/session.controller');
 const { handleBotCheck } = require('../controllers/bot.controller');
 const { registerDevice } = require('../controllers/notification.controller');
@@ -68,10 +69,16 @@ router.post('/claim-session', claimSession);
 router.post('/unclaim-session', unclaimSession);
 
 /**
- * Lets admins add or remove one weekly question from a student's allowance.
+ * Lets the assigned expert resolve (end) a chat session.
  * Caller: ExpertDashboardPage.jsx
  */
-router.post('/adjust-question-allowance', adjustQuestionAllowance);
+router.post('/resolve-session', resolveSession);
+
+/**
+ * Lets admins add or remove one weekly chat session from a student's allowance.
+ * Caller: ExpertDashboardPage.jsx
+ */
+router.post('/adjust-session-allowance', adjustSessionAllowance);
 
 /**
  * Called every time a student sends a message. Central hub for bot logic.

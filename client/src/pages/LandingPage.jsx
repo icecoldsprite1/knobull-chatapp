@@ -11,7 +11,7 @@ const MEMBERSHIP_PLANS = [
     key: 'standard_monthly',
     tier: 'standard',
     title: 'Standard Package',
-    description: 'Five questions per week.',
+    description: 'Five chat sessions per week.',
     price: '$30 / month',
     priceCents: 3000,
     paypalPlanId: import.meta.env.VITE_PAYPAL_STANDARD_MONTHLY_PLAN_ID,
@@ -20,7 +20,7 @@ const MEMBERSHIP_PLANS = [
     key: 'standard_yearly',
     tier: 'standard',
     title: 'Standard Package',
-    description: 'Five questions per week.',
+    description: 'Five chat sessions per week.',
     price: '$300 / year',
     priceCents: 30000,
     paypalPlanId: import.meta.env.VITE_PAYPAL_STANDARD_YEARLY_PLAN_ID,
@@ -29,7 +29,7 @@ const MEMBERSHIP_PLANS = [
     key: 'unlimited_monthly',
     tier: 'unlimited',
     title: 'Unlimited Package',
-    description: 'Unlimited support package.',
+    description: 'Unlimited chat sessions.',
     price: '$90 / month',
     priceCents: 9000,
     paypalPlanId: import.meta.env.VITE_PAYPAL_UNLIMITED_MONTHLY_PLAN_ID,
@@ -38,7 +38,7 @@ const MEMBERSHIP_PLANS = [
     key: 'unlimited_yearly',
     tier: 'unlimited',
     title: 'Unlimited Package',
-    description: 'Unlimited support package.',
+    description: 'Unlimited chat sessions.',
     price: '$900 / year',
     priceCents: 90000,
     paypalPlanId: import.meta.env.VITE_PAYPAL_UNLIMITED_YEARLY_PLAN_ID,
@@ -95,7 +95,7 @@ export default function LandingPage({ user, isAdmin }) {
       if (newCount >= PREVIEW_LIMIT) {
         setPreviewMessages((prev) => [...prev, { 
           sender: 'bot', 
-          text: "I'd love to connect you with an expert who can help with that! Create a free account to start your 30-day trial. 🎓" 
+          text: "I'd love to connect you with an expert who can help with that! Create a free account — you get 2 chat sessions every week. 🎓"
         }]);
         setShowSignupPrompt(true);
       } else {
@@ -180,8 +180,8 @@ export default function LandingPage({ user, isAdmin }) {
     ? `${activePlan.title.replace(' Package', '')} ${membership.billing_interval}`
     : 'Membership';
   const membershipAllowance = membership?.tier === 'unlimited'
-    ? 'Unlimited expert support included'
-    : 'Five expert questions per week included';
+    ? 'Unlimited chat sessions included'
+    : 'Five chat sessions per week included';
   const availablePlanChanges = hasActiveMembership
     ? MEMBERSHIP_PLANS.filter((plan) => plan.key !== membership.plan_key)
     : [];
@@ -197,7 +197,8 @@ export default function LandingPage({ user, isAdmin }) {
     let isCancelled = false;
 
     const fetchUsage = async () => {
-      if (!hasActiveMembership) {
+      // Usage applies to every verified student, including free tier (2/week).
+      if (!isVerifiedStudent) {
         setMembershipUsage(null);
         return;
       }
@@ -217,10 +218,12 @@ export default function LandingPage({ user, isAdmin }) {
 
     fetchUsage();
 
-    const usageChannel = hasActiveMembership && user?.id
-      ? supabase.channel(`membership_usage_${user.id}_${Date.now()}`)
+    // A chat session counts on start, so weekly usage changes when a session
+    // row is created; refresh the counter on any change to this user's sessions.
+    const usageChannel = isVerifiedStudent && user?.id
+      ? supabase.channel(`session_usage_${user.id}_${Date.now()}`)
         .on('postgres_changes',
-          { event: '*', schema: 'public', table: 'question_usage', filter: `user_id=eq.${user.id}` },
+          { event: '*', schema: 'public', table: 'sessions', filter: `student_id=eq.${user.id}` },
           () => fetchUsage()
         )
         .subscribe()
@@ -236,7 +239,7 @@ export default function LandingPage({ user, isAdmin }) {
         supabase.removeChannel(usageChannel);
       }
     };
-  }, [hasActiveMembership, membership?.updated_at, user?.id]);
+  }, [isVerifiedStudent, hasActiveMembership, membership?.updated_at, user?.id]);
 
   const requestPlanChange = (planKey) => {
     setBillingError('');
@@ -555,6 +558,50 @@ export default function LandingPage({ user, isAdmin }) {
               </>
             ) : (
               <>
+                {/* Free-tier status for signed-in students without a paid plan */}
+                {isVerifiedStudent && (
+                  <div className="rounded-xl border border-blue-200 bg-blue-50 p-5">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wide text-blue-700">Free plan</p>
+                        <h3 className="mt-1 text-xl font-bold text-blue-950">2 free chat sessions each week</h3>
+                        <p className="mt-1 text-sm text-blue-800">
+                          Upgrade any time for more weekly sessions or unlimited support.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/chat')}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700"
+                      >
+                        <MessageCircle size={16} />
+                        Go to Chat
+                      </button>
+                    </div>
+                    {membershipUsage?.limit != null && (
+                      <div className="mt-5 rounded-xl border border-blue-200 bg-white p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-wide text-blue-700">Chat sessions this week</p>
+                            <p className="mt-1 text-sm font-semibold text-blue-950">
+                              {membershipUsage.used} of {membershipUsage.limit} used
+                            </p>
+                          </div>
+                          <div className="text-right text-xs font-medium text-blue-700">
+                            {membershipUsage.remaining} remaining
+                          </div>
+                        </div>
+                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-blue-100">
+                          <div
+                            className="h-full rounded-full bg-blue-600"
+                            style={{ width: `${Math.min((membershipUsage.used / membershipUsage.limit) * 100, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Major Time Savings */}
                 <div>
                   <h3 className="text-base font-bold text-gray-900 mb-1">Major Time Savings</h3>
@@ -586,7 +633,7 @@ export default function LandingPage({ user, isAdmin }) {
                       <BookOpen size={17} />
                     </div>
                     <h3 className="text-lg font-bold text-gray-900">
-                      {isAdmin ? 'Admin account detected' : isVerifiedStudent ? 'Choose a membership' : 'Start with 30-day free trial'}
+                      {isAdmin ? 'Admin account detected' : isVerifiedStudent ? 'Choose a membership' : 'Start chatting free'}
                     </h3>
                   </div>
                   <p className="text-gray-600 text-sm leading-relaxed mb-4">
@@ -594,7 +641,7 @@ export default function LandingPage({ user, isAdmin }) {
                       ? 'This account has Advisor Dashboard access. Use a non-admin student account to test subscriptions and student chat.'
                       : isVerifiedStudent
                       ? 'Select a monthly or yearly plan to continue with Knobull expert support.'
-                      : 'Ask a Knobull expert two questions a week during the trial period.'}
+                      : 'Create a free account for 2 chat sessions every week. Upgrade any time for more.'}
                   </p>
 
                   {isAdmin && (
@@ -711,7 +758,7 @@ export default function LandingPage({ user, isAdmin }) {
                   onClick={() => navigate('/login')}
                   className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-8 py-2.5 rounded-xl transition-all text-sm shadow-md shadow-blue-600/20 active:scale-[0.98]"
                 >
-                  Sign Up Free — 30 Day Trial
+                  Sign Up Free — 2 Chats / Week
                 </button>
               </div>
             ) : (
@@ -753,10 +800,10 @@ export default function LandingPage({ user, isAdmin }) {
                   Chat With An Expert
                 </h3>
                 <p className="text-blue-100 text-sm leading-relaxed">
-                  Open a secure session with an academic, career search, research, +more Expert. Start one month free now.
+                  Open a secure session with an academic, career search, research, +more Expert. Get 2 free chat sessions every week.
                 </p>
                 <p className="text-blue-200/70 text-xs mt-3 font-medium">
-                  Free account required • 30-day trial
+                  Free account • 2 chat sessions / week
                 </p>
               </button>
 

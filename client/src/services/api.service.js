@@ -58,7 +58,10 @@ const fetchWithAuth = async (endpoint, options = {}) => {
   }
 
   if (!response.ok) {
-    throw new Error(data.error || `API request failed with status ${response.status}`);
+    const error = new Error(data.error || `API request failed with status ${response.status}`);
+    error.status = response.status;
+    if (data.code) error.code = data.code;
+    throw error;
   }
 
   return data;
@@ -104,10 +107,20 @@ export const apiService = {
   },
 
   /**
-   * Adds/removes one weekly question from a student's allowance.
+   * Resolves (ends) a chat session. The student can then start a new one.
    */
-  adjustQuestionAllowance: async ({ studentId, delta }) => {
-    return fetchWithAuth('/adjust-question-allowance', {
+  resolveSession: async (sessionId) => {
+    return fetchWithAuth('/resolve-session', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId })
+    });
+  },
+
+  /**
+   * Adds/removes one weekly chat session from a student's allowance.
+   */
+  adjustSessionAllowance: async ({ studentId, delta }) => {
+    return fetchWithAuth('/adjust-session-allowance', {
       method: 'POST',
       body: JSON.stringify({ studentId, delta })
     });

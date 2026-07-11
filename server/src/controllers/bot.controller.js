@@ -9,7 +9,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const { GUIDE_SCRIPT } = require('../utils/constants');
 const { notifyExperts } = require('../services/notification.service');
-const { requireActiveMembership } = require('../services/membership.service');
 
 // Initialize the Admin Supabase client.
 // We use the SECRET_KEY so the server can insert messages on behalf of the bot
@@ -46,11 +45,8 @@ const handleBotCheck = async (req, res) => {
     return res.status(400).json({ error: 'Invalid message count' });
   }
 
-  try {
-    await requireActiveMembership(userId);
-  } catch (err) {
-    return res.status(err.statusCode || 500).json({ error: err.message || 'Membership verification failed.' });
-  }
+  // Note: no membership gate here. Free-tier students can chat too; the weekly
+  // chat-session cap is enforced when a session is created (see createSession).
 
   // 🚨 OWNERSHIP CHECK 🚨
   // Verify that the sessionId actually belongs to the authenticated student.
@@ -95,26 +91,25 @@ const handleBotCheck = async (req, res) => {
     }
 
     if (!existingHandoff) {
-    // Simulate a natural "typing" delay before the bot responds (1.5 seconds)
-      setTimeout(async () => {
-        const { error: insertError } = await supabase.from('messages').insert([{
-          session_id: sessionId,
-          user_id: userId,
-          content: GUIDE_SCRIPT.handoff, // "Connecting you to an academic advisor..."
-          sender_type: 'guide'           // Identifies this as a bot aesthetic on the frontend
-        }]);
+      // Insert synchronously (awaited) rather than via setTimeout. On serverless
+      // platforms (Netlify Functions) the process can be frozen right after the
+      // HTTP response returns, which would silently drop a deferred insert.
+      const { error: insertError } = await supabase.from('messages').insert([{
+        session_id: sessionId,
+        user_id: userId,
+        content: GUIDE_SCRIPT.handoff, // "Connecting you to an academic advisor..."
+        sender_type: 'guide'           // Identifies this as a bot aesthetic on the frontend
+      }]);
 
-        if (insertError) {
-          console.error("Bot failed to insert reply to Supabase:", insertError);
-        }
-      }, 1500);
+      if (insertError) {
+        console.error("Bot failed to insert reply to Supabase:", insertError);
+      }
     }
   } catch (err) {
     console.error('Bot handoff error:', err);
   }
-  
-  // 3. Return immediate success to the student's browser 
-  // so their UI doesn't hang while waiting for the bot/notifications.
+
+  // 3. Return success to the student's browser.
   res.sendStatus(200);
 };
 

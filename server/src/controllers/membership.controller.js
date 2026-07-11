@@ -1,4 +1,4 @@
-const { getMembershipUsageSummary } = require('../services/membership.service');
+const { getSessionUsageSummary } = require('../services/membership.service');
 
 const getMembershipUsage = async (req, res) => {
   if (req.user.is_anonymous) {
@@ -6,7 +6,9 @@ const getMembershipUsage = async (req, res) => {
   }
 
   try {
-    const usage = await getMembershipUsageSummary(req.user.sub);
+    // Works for every tier, including free (no membership row) — returns the
+    // weekly chat-session usage and cap.
+    const usage = await getSessionUsageSummary(req.user.sub);
     res.json({ usage });
   } catch (error) {
     console.error('Membership usage error:', error);

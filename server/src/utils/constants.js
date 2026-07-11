@@ -3,6 +3,13 @@ const GUIDE_SCRIPT = {
   handoff: "Understood. I've notified the expert team. Someone will be with you shortly."
 };
 
+// Weekly chat-session caps per tier. A chat session (start -> advisor-resolved)
+// counts as 1. `null` means uncapped.
+const FREE_WEEKLY_SESSIONS = 2;
+const STANDARD_WEEKLY_SESSIONS = 5;
+
 module.exports = {
-  GUIDE_SCRIPT
+  GUIDE_SCRIPT,
+  FREE_WEEKLY_SESSIONS,
+  STANDARD_WEEKLY_SESSIONS,
 };

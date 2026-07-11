@@ -10,7 +10,11 @@ const QUEUE_TABS = [
   { key: 'mine', label: 'Mine' },
   { key: 'unclaimed', label: 'Unclaimed' },
   { key: 'claimed', label: 'Claimed' },
+  { key: 'resolved', label: 'Resolved' },
 ];
+
+// Resolved sessions are "ended" — they only appear in the Resolved tab.
+const isOpenSession = (s) => s.status !== 'resolved';
 
 /**
  * ExpertDashboardPage Component
@@ -62,44 +66,46 @@ export default function ExpertDashboardPage({ user, onLogout }) {
   };
 
   const tabCounts = useMemo(() => ({
-    mine: sessionsList.filter((s) => s.expert_id === user.id).length,
-    unclaimed: sessionsList.filter((s) => !s.expert_id).length,
-    claimed: sessionsList.filter((s) => s.expert_id && s.expert_id !== user.id).length,
+    mine: sessionsList.filter((s) => isOpenSession(s) && s.expert_id === user.id).length,
+    unclaimed: sessionsList.filter((s) => isOpenSession(s) && !s.expert_id).length,
+    claimed: sessionsList.filter((s) => isOpenSession(s) && s.expert_id && s.expert_id !== user.id).length,
+    resolved: sessionsList.filter((s) => !isOpenSession(s)).length,
   }), [sessionsList, user.id]);
 
   const mineUnreadTotal = useMemo(() => (
     sessionsList.reduce((total, session) => {
-      if (session.expert_id !== user.id) return total;
+      if (!isOpenSession(session) || session.expert_id !== user.id) return total;
       return total + Math.max(0, (session.student_message_count || 0) - (readCounts[session.id] || 0));
     }, 0)
   ), [sessionsList, readCounts, user.id]);
 
   const filteredSessions = useMemo(() => {
     if (activeTab === 'mine') {
-      return sessionsList.filter((s) => s.expert_id === user.id);
+      return sessionsList.filter((s) => isOpenSession(s) && s.expert_id === user.id);
     }
 
     if (activeTab === 'unclaimed') {
-      return sessionsList.filter((s) => !s.expert_id);
+      return sessionsList.filter((s) => isOpenSession(s) && !s.expert_id);
     }
 
-    return sessionsList.filter((s) => s.expert_id && s.expert_id !== user.id);
+    if (activeTab === 'resolved') {
+      return sessionsList.filter((s) => !isOpenSession(s));
+    }
+
+    return sessionsList.filter((s) => isOpenSession(s) && s.expert_id && s.expert_id !== user.id);
   }, [activeTab, sessionsList, user.id]);
 
   const getMembershipLabel = (session) => {
-    if (!session.has_active_membership) {
-      return 'No active membership';
+    if (session.has_unlimited_sessions) {
+      return 'Unlimited sessions';
     }
 
-    if (session.has_unlimited_questions) {
-      return 'Unlimited questions';
+    if (session.session_limit_weekly == null) {
+      return session.has_active_membership ? 'Membership active' : 'Free plan';
     }
 
-    if (session.questions_remaining_weekly == null) {
-      return 'Membership active';
-    }
-
-    return `${session.questions_used_weekly || 0} used / ${session.questions_remaining_weekly} left this week`;
+    const prefix = session.has_active_membership ? '' : 'Free • ';
+    return `${prefix}${session.sessions_used_weekly || 0} / ${session.session_limit_weekly} sessions this week`;
   };
 
   const refreshSessionsSoon = () => {
@@ -133,14 +139,6 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     const messagesChannel = supabase.channel(messagesChannelName)
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages' },
-        () => refreshSessionsSoon()
-      )
-      .subscribe();
-
-    const usageChannelName = `question_usage_queue_${Date.now()}`;
-    const usageChannel = supabase.channel(usageChannelName)
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'question_usage' },
         () => refreshSessionsSoon()
       )
       .subscribe();
@@ -185,7 +183,6 @@ export default function ExpertDashboardPage({ user, onLogout }) {
       }
       supabase.removeChannel(sessionsChannel);
       supabase.removeChannel(messagesChannel);
-      supabase.removeChannel(usageChannel);
     };
   }, []);
 
@@ -245,6 +242,13 @@ export default function ExpertDashboardPage({ user, onLogout }) {
    */
   const handleSelectSession = async (sessionData) => {
     try {
+      // Resolved sessions are read-only history — just open them.
+      if (!isOpenSession(sessionData)) {
+        markSessionRead(sessionData);
+        setActiveSession(sessionData);
+        return;
+      }
+
       if (sessionData.expert_id && sessionData.expert_id !== user.id) {
         alert('This session is already claimed by another advisor.');
         return;
@@ -289,21 +293,43 @@ export default function ExpertDashboardPage({ user, onLogout }) {
     }
   };
 
-  const handleQuestionAdjustment = async (event, session, delta) => {
+  const handleSessionAdjustment = async (event, session, delta) => {
     event.stopPropagation();
 
-    const actionKey = `questions:${session.student_id}`;
+    const actionKey = `sessions:${session.student_id}`;
     if (pendingActions[actionKey]) return;
 
     try {
       setPendingActions((prev) => ({ ...prev, [actionKey]: true }));
-      await apiService.adjustQuestionAllowance({
+      await apiService.adjustSessionAllowance({
         studentId: session.student_id,
         delta,
       });
       fetchSessions();
     } catch (err) {
-      alert(err.message || 'Failed to adjust question allowance.');
+      alert(err.message || 'Failed to adjust session allowance.');
+    } finally {
+      setPendingActions((prev) => ({ ...prev, [actionKey]: false }));
+    }
+  };
+
+  const handleResolveSession = async () => {
+    if (!activeSession) return;
+
+    const confirmed = window.confirm('Resolve this chat? It will be closed and the student can start a new session.');
+    if (!confirmed) return;
+
+    const actionKey = `resolve:${activeSession.id}`;
+    if (pendingActions[actionKey]) return;
+
+    try {
+      setPendingActions((prev) => ({ ...prev, [actionKey]: true }));
+      await apiService.resolveSession(activeSession.id);
+      setActiveSession(null);
+      setActiveTab('resolved');
+      fetchSessions();
+    } catch (err) {
+      alert(err.message || 'Failed to resolve session.');
     } finally {
       setPendingActions((prev) => ({ ...prev, [actionKey]: false }));
     }
@@ -471,7 +497,8 @@ export default function ExpertDashboardPage({ user, onLogout }) {
                 const unreadCount = getUnreadCount(s);
                 const isMine = s.expert_id === user.id;
                 const isClaimedByOther = s.expert_id && !isMine;
-                const isAdjustingQuestions = Boolean(pendingActions[`questions:${s.student_id}`]);
+                const isAdjustingSessions = Boolean(pendingActions[`sessions:${s.student_id}`]);
+                const isResolved = !isOpenSession(s);
 
                 return (
                 <div 
@@ -513,6 +540,11 @@ export default function ExpertDashboardPage({ user, onLogout }) {
 
                   <div className="mb-4 min-h-[52px]">
                     <div className="flex flex-wrap items-center gap-2 mb-3">
+                      {isResolved && (
+                        <span className="text-[11px] font-bold uppercase tracking-wider rounded-full bg-slate-100 text-slate-600 border border-slate-200 px-2.5 py-1">
+                          Resolved
+                        </span>
+                      )}
                       {s.needs_advisor_reply && (
                         <span className="text-[11px] font-bold uppercase tracking-wider rounded-full bg-red-50 text-red-700 border border-red-200 px-2.5 py-1">
                           Needs reply
@@ -520,16 +552,16 @@ export default function ExpertDashboardPage({ user, onLogout }) {
                       )}
                       <span className={`text-[11px] font-bold uppercase tracking-wider rounded-full border px-2.5 py-1 ${
                         s.has_active_membership
-                          ? s.has_unlimited_questions
+                          ? s.has_unlimited_sessions
                             ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
                             : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                           : 'bg-slate-50 text-slate-500 border-slate-200'
                       }`}>
                         {s.has_active_membership
-                          ? s.has_unlimited_questions
+                          ? s.has_unlimited_sessions
                             ? 'Unlimited'
                             : 'Member'
-                          : 'No membership'}
+                          : 'Free'}
                       </span>
                     </div>
                     <p className="text-xs font-semibold text-slate-600 mb-3">
@@ -537,24 +569,24 @@ export default function ExpertDashboardPage({ user, onLogout }) {
                       {s.has_active_membership && s.membership_tier ? ` • ${s.membership_tier}` : ''}
                       {s.billing_interval ? ` ${s.billing_interval}` : ''}
                     </p>
-                    {s.has_active_membership && !s.has_unlimited_questions && (
+                    {!s.has_unlimited_sessions && (
                       <div className="mb-3 flex items-center gap-2">
                         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Adjust</span>
                         <button
                           type="button"
-                          onClick={(event) => handleQuestionAdjustment(event, s, -1)}
-                          disabled={isAdjustingQuestions}
+                          onClick={(event) => handleSessionAdjustment(event, s, -1)}
+                          disabled={isAdjustingSessions}
                           className="h-7 w-7 rounded-full border border-slate-200 bg-white text-sm font-bold text-slate-600 hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                          aria-label="Remove one weekly question"
+                          aria-label="Remove one weekly chat session"
                         >
                           -
                         </button>
                         <button
                           type="button"
-                          onClick={(event) => handleQuestionAdjustment(event, s, 1)}
-                          disabled={isAdjustingQuestions}
+                          onClick={(event) => handleSessionAdjustment(event, s, 1)}
+                          disabled={isAdjustingSessions}
                           className="h-7 w-7 rounded-full border border-slate-200 bg-white text-sm font-bold text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                          aria-label="Add one weekly question"
+                          aria-label="Add one weekly chat session"
                         >
                           +
                         </button>
@@ -570,12 +602,12 @@ export default function ExpertDashboardPage({ user, onLogout }) {
                   
                   <div className="flex items-center justify-between mt-2 pt-4 border-t border-slate-100">
                     <p className={`text-sm font-semibold ${
-                      isMine ? 'text-blue-700' : isClaimedByOther ? 'text-slate-500' : 'text-slate-700'
+                      isResolved ? 'text-slate-500' : isMine ? 'text-blue-700' : isClaimedByOther ? 'text-slate-500' : 'text-slate-700'
                     }`}>
-                      {isMine ? 'Active Session' : isClaimedByOther ? 'Claimed' : 'Unclaimed'}
+                      {isResolved ? 'Resolved' : isMine ? 'Active Session' : isClaimedByOther ? 'Claimed' : 'Unclaimed'}
                     </p>
-                    <span className={`text-xs font-bold uppercase tracking-wider ${isMine ? 'text-blue-600 group-hover:underline' : isClaimedByOther ? 'text-slate-400' : 'text-blue-500'}`}>
-                      {isMine ? 'Resume →' : isClaimedByOther ? 'Assigned' : 'Claim →'}
+                    <span className={`text-xs font-bold uppercase tracking-wider ${isResolved ? 'text-slate-400' : isMine ? 'text-blue-600 group-hover:underline' : isClaimedByOther ? 'text-slate-400' : 'text-blue-500'}`}>
+                      {isResolved ? 'View' : isMine ? 'Resume →' : isClaimedByOther ? 'Assigned' : 'Claim →'}
                     </span>
                   </div>
                 </div>
@@ -616,14 +648,23 @@ export default function ExpertDashboardPage({ user, onLogout }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {activeSession.expert_id === user.id && (
-              <button
-                onClick={handleUnclaimSession}
-                disabled={Boolean(pendingActions[`unclaim:${activeSession.id}`])}
-                className="flex items-center gap-1.5 text-xs font-semibold text-amber-200 hover:text-white px-3 py-1.5 border border-amber-500/30 hover:bg-amber-500/10 rounded-lg transition-all shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Unclaim
-              </button>
+            {isOpenSession(activeSession) && activeSession.expert_id === user.id && (
+              <>
+                <button
+                  onClick={handleUnclaimSession}
+                  disabled={Boolean(pendingActions[`unclaim:${activeSession.id}`])}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-amber-200 hover:text-white px-3 py-1.5 border border-amber-500/30 hover:bg-amber-500/10 rounded-lg transition-all shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Unclaim
+                </button>
+                <button
+                  onClick={handleResolveSession}
+                  disabled={Boolean(pendingActions[`resolve:${activeSession.id}`])}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-emerald-200 hover:text-white px-3 py-1.5 border border-emerald-500/30 hover:bg-emerald-500/10 rounded-lg transition-all shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Resolve
+                </button>
+              </>
             )}
             <button onClick={() => setActiveSession(null)} className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white px-3 py-1.5 border border-slate-700 hover:bg-slate-800 rounded-lg transition-all shadow-sm">
               ← Dashboard
@@ -637,18 +678,24 @@ export default function ExpertDashboardPage({ user, onLogout }) {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
-        <form onSubmit={sendMessage} className="p-4 bg-white border-t border-blue-50 flex gap-3 shadow-[0_-4px_20px_-15px_rgba(0,0,0,0.1)]">
-          <input 
-            value={input} 
-            onChange={e => setInput(e.target.value)} 
-            className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder:text-slate-400 shadow-sm" 
-            placeholder="Send message to student..." 
-          />
-          <button type="submit" className="bg-slate-900 hover:bg-slate-800 shadow-md shadow-slate-900/20 text-white px-6 py-3 rounded-xl font-medium transition-all active:scale-95 text-sm">
-            Send
-          </button>
-        </form>
+        {/* Input, or resolved notice */}
+        {isOpenSession(activeSession) ? (
+          <form onSubmit={sendMessage} className="p-4 bg-white border-t border-blue-50 flex gap-3 shadow-[0_-4px_20px_-15px_rgba(0,0,0,0.1)]">
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder:text-slate-400 shadow-sm"
+              placeholder="Send message to student..."
+            />
+            <button type="submit" className="bg-slate-900 hover:bg-slate-800 shadow-md shadow-slate-900/20 text-white px-6 py-3 rounded-xl font-medium transition-all active:scale-95 text-sm">
+              Send
+            </button>
+          </form>
+        ) : (
+          <div className="p-4 bg-slate-50 border-t border-slate-200 text-center text-sm font-medium text-slate-500">
+            This chat session has been resolved and is read-only.
+          </div>
+        )}
       </div>
     </div>
   );

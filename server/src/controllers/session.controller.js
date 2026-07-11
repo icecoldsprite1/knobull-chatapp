@@ -3,7 +3,10 @@ const { GUIDE_SCRIPT } = require('../utils/constants');
 const {
   getWeekStart,
   hasActiveMembership,
-  requireActiveMembership,
+  getBaseWeeklySessionLimit,
+  getTierLabel,
+  getSessionUsageSummary,
+  ensureSessionAvailable,
 } = require('../services/membership.service');
 
 // Initialize the Admin Supabase client in the controller context
@@ -12,49 +15,76 @@ const supabase = createClient(
   process.env.SUPABASE_SECRET_KEY
 );
 
+// UUID v4 format validator
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const getOpenSessionForStudent = async (studentId) => {
+  const { data, error } = await supabase
+    .from('sessions')
+    .select('*')
+    .eq('student_id', studentId)
+    .eq('status', 'open')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Open session lookup error:', error);
+    throw new Error('Failed to load chat session.');
+  }
+
+  return data;
+};
+
 /**
  * Create a new chat session for a student.
+ *
+ * Metering model: a chat session (start -> advisor-resolved) counts as 1.
+ * Free tier = 2/week, standard = 5/week, unlimited = uncapped. A student may
+ * only have ONE open session at a time; returning that open session does NOT
+ * consume a new weekly slot.
  */
 const createSession = async (req, res) => {
   // Use the verified user ID from the JWT token, NOT the request body
-  const userId = req.user.sub; 
+  const userId = req.user.sub;
 
   // 🚨 SECURITY: Block anonymous accounts from creating sessions
-  // Only verified, non-anonymous email users should reach this point
   if (req.user.is_anonymous) {
     return res.status(403).json({ error: 'Forbidden: Account required. Anonymous users cannot create sessions.' });
   }
 
   try {
-    await requireActiveMembership(userId);
+    // 1. If the student already has an OPEN session, reuse it (no new count).
+    const openSession = await getOpenSessionForStudent(userId);
+    if (openSession) {
+      return res.json({ session: openSession });
+    }
 
-    // 1. Create the Session Row for the student
+    // 2. Enforce the weekly chat-session limit for this tier (free/standard/unlimited).
+    await ensureSessionAvailable(userId);
+
+    // 3. Create the Session Row for the student
     const { data: session, error: sessionError } = await supabase
       .from('sessions')
-      .insert([{ student_id: userId }])
+      .insert([{ student_id: userId, status: 'open', week_start: getWeekStart() }])
       .select()
       .single();
 
     if (sessionError) {
       if (sessionError.code === '23505') {
-        // A session already exists for this student! (Likely due to a React StrictMode double-fire)
-        // Instead of failing, just fetch and return their existing session gracefully.
-        const { data: existingSession } = await supabase
-          .from('sessions')
-          .select('*')
-          .eq('student_id', userId)
-          .single();
-          
+        // Race with a concurrent create (partial unique index on open sessions).
+        // Return the session that won the race instead of failing.
+        const existingSession = await getOpenSessionForStudent(userId);
         if (existingSession) {
           return res.json({ session: existingSession });
         }
       }
-      
+
       console.error('Session creation error:', sessionError);
-      return res.status(400).json({ error: 'Failed to create session. You may already have an active session.' });
+      return res.status(400).json({ error: 'Failed to create session. Please try again.' });
     }
 
-    // 2. Post the Guide's Welcome Message
+    // 4. Post the Guide's Welcome Message
     const { error: messageError } = await supabase.from('messages').insert([{
       session_id: session.id,
       user_id: userId,
@@ -63,7 +93,7 @@ const createSession = async (req, res) => {
     }]);
 
     if (messageError) {
-       console.error("Bot failed to insert a welcome message:", messageError);
+      console.error("Bot failed to insert a welcome message:", messageError);
     }
 
     res.json({ session });
@@ -72,12 +102,6 @@ const createSession = async (req, res) => {
     res.status(error.statusCode || 500).json({ error: error.message || 'Internal Server Error' });
   }
 };
-
-/**
- * Allows an Expert to claim an active session
- */
-// UUID v4 format validator
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const assertAdmin = async (userId) => {
   const { data: adminRow, error } = await supabase
@@ -181,21 +205,29 @@ const listExpertSessions = async (req, res) => {
     }
 
     const weekStart = getWeekStart();
-    const { data: questionUsage, error: questionUsageError } = await supabase
-      .from('question_usage')
-      .select('user_id')
+    const { data: grants, error: grantsError } = await supabase
+      .from('weekly_session_grants')
+      .select('user_id, bonus')
       .in('user_id', studentIds)
       .eq('week_start', weekStart);
 
-    if (questionUsageError) {
-      console.error('Expert question usage summary error:', questionUsageError);
-      return res.status(500).json({ error: 'Failed to load question usage summaries.' });
+    if (grantsError) {
+      console.error('Expert session grant summary error:', grantsError);
+      return res.status(500).json({ error: 'Failed to load session grant summaries.' });
     }
 
     const membershipByUser = new Map((memberships || []).map((membership) => [membership.user_id, membership]));
-    const usageByUser = new Map();
-    for (const usage of questionUsage || []) {
-      usageByUser.set(usage.user_id, (usageByUser.get(usage.user_id) || 0) + 1);
+    const bonusByUser = new Map((grants || []).map((grant) => [grant.user_id, grant.bonus]));
+
+    // Sessions STARTED this week per student = weekly usage against the cap.
+    const sessionsThisWeekByStudent = new Map();
+    for (const session of sessions) {
+      if (session.week_start === weekStart) {
+        sessionsThisWeekByStudent.set(
+          session.student_id,
+          (sessionsThisWeekByStudent.get(session.student_id) || 0) + 1
+        );
+      }
     }
 
     const summaryBySession = new Map();
@@ -239,27 +271,32 @@ const listExpertSessions = async (req, res) => {
       const lastActivityAt = lastMessage?.created_at || session.created_at;
       const membership = membershipByUser.get(session.student_id) || null;
       const isActiveMember = hasActiveMembership(membership);
-      const questionsUsedWeekly = usageByUser.get(session.student_id) || 0;
-      const questionLimitWeekly = membership?.question_limit_weekly ?? null;
-      const questionsRemainingWeekly = questionLimitWeekly == null
+      const tier = getTierLabel(membership);
+      const baseLimit = getBaseWeeklySessionLimit(membership);
+      const bonus = baseLimit == null ? 0 : (bonusByUser.get(session.student_id) || 0);
+      const sessionsUsedWeekly = sessionsThisWeekByStudent.get(session.student_id) || 0;
+      const sessionLimitWeekly = baseLimit == null ? null : Math.max(0, baseLimit + bonus);
+      const sessionsRemainingWeekly = sessionLimitWeekly == null
         ? null
-        : Math.max(questionLimitWeekly - questionsUsedWeekly, 0);
-      const hasUnlimitedQuestions = isActiveMember && questionLimitWeekly == null;
+        : Math.max(sessionLimitWeekly - sessionsUsedWeekly, 0);
+      const hasUnlimitedSessions = baseLimit == null;
+      const isResolved = session.status === 'resolved';
       const pendingStudentMessages = summary.pendingStudentMessageCount || 0;
-      const needsAdvisorReply = isActiveMember && pendingStudentMessages > 0;
+      const needsAdvisorReply = !isResolved && pendingStudentMessages > 0;
 
       return {
         ...session,
         ...student,
+        tier,
         has_active_membership: isActiveMember,
         membership_status: membership?.status || null,
         membership_tier: membership?.tier || null,
         membership_plan_key: membership?.plan_key || null,
         billing_interval: membership?.billing_interval || null,
-        question_limit_weekly: questionLimitWeekly,
-        questions_used_weekly: questionsUsedWeekly,
-        questions_remaining_weekly: questionsRemainingWeekly,
-        has_unlimited_questions: hasUnlimitedQuestions,
+        session_limit_weekly: sessionLimitWeekly,
+        sessions_used_weekly: sessionsUsedWeekly,
+        sessions_remaining_weekly: sessionsRemainingWeekly,
+        has_unlimited_sessions: hasUnlimitedSessions,
         last_message_preview: summarizeContent(lastMessage?.content),
         last_message_sender_type: lastMessage?.sender_type || null,
         last_message_created_at: lastMessage?.created_at || null,
@@ -314,12 +351,13 @@ const claimSession = async (req, res) => {
       .from('sessions')
       .update({ expert_id: expertId })
       .eq('id', sessionId)
+      .eq('status', 'open')
       .is('expert_id', null) // Only update if no expert has claimed it yet
       .select()
       .single();
 
     if (error || !session) {
-      return res.status(400).json({ error: "Session may already be claimed or does not exist." });
+      return res.status(400).json({ error: "Session may already be claimed, resolved, or does not exist." });
     }
 
     res.json({ session, message: "Session claimed successfully." });
@@ -344,11 +382,12 @@ const unclaimSession = async (req, res) => {
       .update({ expert_id: null })
       .eq('id', sessionId)
       .eq('expert_id', expertId)
+      .eq('status', 'open')
       .select()
       .single();
 
     if (error || !session) {
-      return res.status(400).json({ error: 'Only the assigned advisor can unclaim this session.' });
+      return res.status(400).json({ error: 'Only the assigned advisor can unclaim this open session.' });
     }
 
     res.json({ session, message: 'Session returned to the unclaimed queue.' });
@@ -358,7 +397,52 @@ const unclaimSession = async (req, res) => {
   }
 };
 
-const adjustQuestionAllowance = async (req, res) => {
+/**
+ * Resolve (end) a chat session. This is what "ends" a session in the metering
+ * model: once resolved, the student can start a new session (counted separately).
+ * Only the assigned advisor may resolve their own open session.
+ */
+const resolveSession = async (req, res) => {
+  const expertId = req.user.sub;
+  const { sessionId } = req.body;
+
+  if (!sessionId || !UUID_REGEX.test(sessionId)) {
+    return res.status(400).json({ error: 'Invalid session ID format' });
+  }
+
+  try {
+    await assertAdmin(expertId);
+
+    const { data: session, error } = await supabase
+      .from('sessions')
+      .update({
+        status: 'resolved',
+        resolved_at: new Date().toISOString(),
+        resolved_by: expertId,
+      })
+      .eq('id', sessionId)
+      .eq('expert_id', expertId)
+      .eq('status', 'open')
+      .select()
+      .single();
+
+    if (error || !session) {
+      return res.status(400).json({ error: 'Only the assigned advisor can resolve an open session.' });
+    }
+
+    res.json({ session, message: 'Session resolved.' });
+  } catch (error) {
+    console.error('Session resolve error:', error);
+    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to resolve session.' });
+  }
+};
+
+/**
+ * Lets admins add or remove one weekly chat session from a student's allowance
+ * for the current week. Stored as a per-week grant so it survives PayPal webhook
+ * updates and also works for free-tier students (who have no membership row).
+ */
+const adjustSessionAllowance = async (req, res) => {
   const adminId = req.user.sub;
   const { studentId, delta } = req.body;
   const adjustment = Number(delta);
@@ -368,48 +452,50 @@ const adjustQuestionAllowance = async (req, res) => {
   }
 
   if (!Number.isInteger(adjustment) || ![-1, 1].includes(adjustment)) {
-    return res.status(400).json({ error: 'Question adjustment must be +1 or -1.' });
+    return res.status(400).json({ error: 'Session adjustment must be +1 or -1.' });
   }
 
   try {
     await assertAdmin(adminId);
 
-    const { data: membership, error: membershipError } = await supabase
-      .from('memberships')
-      .select('*')
+    const summary = await getSessionUsageSummary(studentId);
+
+    if (summary.limit == null) {
+      return res.status(400).json({ error: 'Unlimited members do not need session adjustments.' });
+    }
+
+    const weekStart = getWeekStart();
+    const { data: existingGrant, error: grantLookupError } = await supabase
+      .from('weekly_session_grants')
+      .select('bonus')
       .eq('user_id', studentId)
+      .eq('week_start', weekStart)
       .maybeSingle();
 
-    if (membershipError) {
-      console.error('Membership adjustment lookup error:', membershipError);
-      return res.status(500).json({ error: 'Failed to load membership.' });
+    if (grantLookupError) {
+      console.error('Session grant lookup error:', grantLookupError);
+      return res.status(500).json({ error: 'Failed to load session allowance.' });
     }
 
-    if (!membership || !hasActiveMembership(membership)) {
-      return res.status(400).json({ error: 'Student does not have an active membership.' });
+    const nextBonus = (existingGrant?.bonus || 0) + adjustment;
+
+    const { error: upsertError } = await supabase
+      .from('weekly_session_grants')
+      .upsert(
+        { user_id: studentId, week_start: weekStart, bonus: nextBonus, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,week_start' }
+      );
+
+    if (upsertError) {
+      console.error('Session grant upsert error:', upsertError);
+      return res.status(500).json({ error: 'Failed to update session allowance.' });
     }
 
-    if (membership.question_limit_weekly == null) {
-      return res.status(400).json({ error: 'Unlimited members do not need question adjustments.' });
-    }
-
-    const nextLimit = Math.max(0, membership.question_limit_weekly + adjustment);
-    const { data: updatedMembership, error: updateError } = await supabase
-      .from('memberships')
-      .update({ question_limit_weekly: nextLimit })
-      .eq('user_id', studentId)
-      .select()
-      .single();
-
-    if (updateError) {
-      console.error('Membership adjustment update error:', updateError);
-      return res.status(500).json({ error: 'Failed to update question allowance.' });
-    }
-
-    res.json({ membership: updatedMembership });
+    const updatedSummary = await getSessionUsageSummary(studentId);
+    res.json({ usage: updatedSummary });
   } catch (error) {
-    console.error('Question allowance adjustment error:', error);
-    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to adjust question allowance.' });
+    console.error('Session allowance adjustment error:', error);
+    res.status(error.statusCode || 500).json({ error: error.message || 'Failed to adjust session allowance.' });
   }
 };
 
@@ -418,5 +504,6 @@ module.exports = {
   listExpertSessions,
   claimSession,
   unclaimSession,
-  adjustQuestionAllowance
+  resolveSession,
+  adjustSessionAllowance,
 };
