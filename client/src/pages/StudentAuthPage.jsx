@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Mail, Lock, ArrowLeft, CheckCircle } from 'lucide-react';
 import HCaptcha from '@hcaptcha/react-hcaptcha';
@@ -28,6 +28,19 @@ export default function StudentAuthPage() {
   const [captchaToken, setCaptchaToken] = useState(null);
   const captchaRef = useRef(null);
 
+  // Resend verification email (shown on the check-email screen)
+  const [isResending, setIsResending] = useState(false);
+  const [resendMsg, setResendMsg] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resendCaptcha, setResendCaptcha] = useState(null);
+  const resendCaptchaRef = useRef(null);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return undefined;
+    const timer = setTimeout(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [resendCooldown]);
+
   const resetCaptcha = () => {
     setCaptchaToken(null);
     captchaRef.current?.resetCaptcha();
@@ -40,6 +53,8 @@ export default function StudentAuthPage() {
     setConfirmPassword('');
     setCaptchaToken(null);
     captchaRef.current?.resetCaptcha();
+    setResendMsg('');
+    setResendCaptcha(null);
   };
 
   /**
@@ -143,6 +158,47 @@ export default function StudentAuthPage() {
     }
   };
 
+  /**
+   * Resend the signup verification email. Requires a fresh captcha token since
+   * the project enforces hCaptcha on auth endpoints, and is rate-limited with a
+   * cooldown to respect the mailer's send limits.
+   */
+  const handleResend = async () => {
+    if (isResending || resendCooldown > 0) return;
+
+    if (HCAPTCHA_SITEKEY && !resendCaptcha) {
+      setResendMsg('Please complete the security check first.');
+      return;
+    }
+
+    setIsResending(true);
+    setResendMsg('');
+
+    try {
+      const { error: resendError } = await supabase.auth.resend({
+        type: 'signup',
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          captchaToken: resendCaptcha || undefined,
+        },
+      });
+
+      if (resendError) {
+        setResendMsg(resendError.message);
+      } else {
+        setResendMsg('Sent! Check your inbox and spam folder — delivery can take a couple of minutes.');
+        setResendCooldown(60);
+      }
+    } catch {
+      setResendMsg('Could not resend right now. Please try again shortly.');
+    } finally {
+      setIsResending(false);
+      setResendCaptcha(null);
+      resendCaptchaRef.current?.resetCaptcha();
+    }
+  };
+
   // ============================================
   // CHECK EMAIL SUCCESS STATE
   // ============================================
@@ -158,10 +214,39 @@ export default function StudentAuthPage() {
             We sent a verification link to <span className="font-semibold text-slate-700">{email}</span>. 
             Click the link in your inbox to activate your account.
           </p>
-          <p className="text-slate-400 text-xs mb-6">
-            Don't see it? Check your spam folder.
+          <p className="text-slate-400 text-xs mb-5">
+            Don't see it? Check your spam folder, or resend below.
           </p>
-          <button 
+
+          {HCAPTCHA_SITEKEY && (
+            <div className="flex justify-center mb-3">
+              <HCaptcha
+                ref={resendCaptchaRef}
+                sitekey={HCAPTCHA_SITEKEY}
+                onVerify={(token) => setResendCaptcha(token)}
+                onExpire={() => setResendCaptcha(null)}
+                onError={() => setResendCaptcha(null)}
+              />
+            </div>
+          )}
+
+          {resendMsg && (
+            <p className="text-slate-500 text-xs mb-3">{resendMsg}</p>
+          )}
+
+          <button
+            onClick={handleResend}
+            disabled={isResending || resendCooldown > 0 || (!!HCAPTCHA_SITEKEY && !resendCaptcha)}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-xl transition-all text-sm disabled:opacity-50 mb-4"
+          >
+            {resendCooldown > 0
+              ? `Resend in ${resendCooldown}s`
+              : isResending
+              ? 'Sending...'
+              : 'Resend verification email'}
+          </button>
+
+          <button
             onClick={() => switchMode('login')}
             className="text-blue-600 hover:text-blue-700 text-sm font-semibold underline underline-offset-2"
           >
