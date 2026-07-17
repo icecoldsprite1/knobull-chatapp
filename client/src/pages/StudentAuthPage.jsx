@@ -18,6 +18,9 @@ export default function StudentAuthPage() {
   const navigate = useNavigate();
   
   const [mode, setMode] = useState('login'); // 'login' | 'signup' | 'check-email'
+  // True when an anonymous trial guest is on this page: signing up converts their
+  // existing account (preserving the trial chat) rather than creating a new one.
+  const [isGuest, setIsGuest] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -40,6 +43,20 @@ export default function StudentAuthPage() {
     const timer = setTimeout(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000);
     return () => clearTimeout(timer);
   }, [resendCooldown]);
+
+  // Detect an anonymous trial guest so we default to the signup form and convert
+  // their account (instead of creating a new one) when they register.
+  useEffect(() => {
+    let cancelled = false;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (cancelled) return;
+      if (session?.user?.is_anonymous) {
+        setIsGuest(true);
+        setMode('signup');
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const resetCaptcha = () => {
     setCaptchaToken(null);
@@ -84,22 +101,42 @@ export default function StudentAuthPage() {
     setError(null);
 
     try {
-      const { error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          captchaToken,
-          emailRedirectTo: `${window.location.origin}/auth/callback`
-        }
-      });
+      // If the visitor is currently an anonymous trial guest, CONVERT their
+      // existing account into a permanent one. This keeps the same user id, so
+      // their trial chat session and history carry over. Otherwise, create a new
+      // account as usual.
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const convertingGuest = Boolean(currentSession?.user?.is_anonymous);
 
-      if (signUpError) {
-        setError(signUpError.message);
-        resetCaptcha();
-        return;
+      if (convertingGuest) {
+        const { error: updateError } = await supabase.auth.updateUser(
+          { email, password },
+          { emailRedirectTo: `${window.location.origin}/auth/callback` }
+        );
+
+        if (updateError) {
+          setError(updateError.message);
+          resetCaptcha();
+          return;
+        }
+      } else {
+        const { error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            captchaToken,
+            emailRedirectTo: `${window.location.origin}/auth/callback`
+          }
+        });
+
+        if (signUpError) {
+          setError(signUpError.message);
+          resetCaptcha();
+          return;
+        }
       }
 
-      // Successfully registered — show "check your email" state
+      // Successfully registered / conversion started — show "check your email"
       setMode('check-email');
     } catch (err) {
       console.error('Signup failed:', err);
@@ -176,7 +213,9 @@ export default function StudentAuthPage() {
 
     try {
       const { error: resendError } = await supabase.auth.resend({
-        type: 'signup',
+        // A converting trial guest confirms an email CHANGE on their existing
+        // account; a brand-new user confirms a signup.
+        type: isGuest ? 'email_change' : 'signup',
         email,
         options: {
           emailRedirectTo: `${window.location.origin}/auth/callback`,
@@ -278,8 +317,10 @@ export default function StudentAuthPage() {
             {mode === 'login' ? 'Student Sign In' : 'Create Account'}
           </h2>
           <p className="text-slate-500 text-sm mt-1">
-            {mode === 'login' 
-              ? 'Sign in to chat with a Knobull expert' 
+            {mode === 'login'
+              ? 'Sign in to chat with a Knobull expert'
+              : isGuest
+              ? 'Create a free account to save your trial chat and keep chatting'
               : 'Create your free account to get started'}
           </p>
         </div>

@@ -32,10 +32,9 @@ const handleBotCheck = async (req, res) => {
   const { sessionId, messageCount } = req.body;
   const userId = req.user.sub; // Extracted securely by requireAuth middleware
 
-  // 🚨 SECURITY: Block anonymous accounts
-  if (req.user.is_anonymous) {
-    return res.status(403).json({ error: 'Forbidden: Account required.' });
-  }
+  // Anonymous (trial guest) users are allowed: we WANT experts notified about a
+  // trial chat, and the guide handoff to appear. The ownership check below scopes
+  // this strictly to the caller's own session.
 
   // Input Validation
   if (!sessionId || !UUID_REGEX.test(sessionId)) {

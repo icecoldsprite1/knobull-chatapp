@@ -2,6 +2,7 @@ const { createClient } = require('@supabase/supabase-js');
 const {
   FREE_WEEKLY_SESSIONS,
   STANDARD_WEEKLY_SESSIONS,
+  TRIAL_TOTAL_SESSIONS,
 } = require('../utils/constants');
 
 const supabase = createClient(
@@ -90,6 +91,44 @@ const getWeeklySessionBonus = async (userId, weekStart = getWeekStart()) => {
   return data?.bonus || 0;
 };
 
+/**
+ * Total chat sessions this user has ever started. Used only for the guest
+ * free-trial cap (anonymous users), which is a lifetime cap, not a weekly one.
+ */
+const getLifetimeSessionCount = async (userId) => {
+  const { count, error } = await supabase
+    .from('sessions')
+    .select('id', { count: 'exact', head: true })
+    .eq('student_id', userId);
+
+  if (error) {
+    console.error('Lifetime session count error:', error);
+    throw new Error('Failed to check trial usage.');
+  }
+
+  return count || 0;
+};
+
+/**
+ * Throws a 402 (code TRIAL_LIMIT_REACHED) once a guest has used up their free
+ * trial session(s). Callers should have already returned any existing OPEN
+ * session before calling this so continuing a trial chat is free.
+ */
+const ensureTrialSessionAvailable = async (userId) => {
+  const used = await getLifetimeSessionCount(userId);
+
+  if (used >= TRIAL_TOTAL_SESSIONS) {
+    const error = new Error(
+      'Your free trial chat is complete. Create a free account to keep chatting with our experts — your trial conversation is saved.'
+    );
+    error.statusCode = 402;
+    error.code = 'TRIAL_LIMIT_REACHED';
+    throw error;
+  }
+
+  return { used, limit: TRIAL_TOTAL_SESSIONS, remaining: Math.max(TRIAL_TOTAL_SESSIONS - used, 0) };
+};
+
 const getWeeklySessionCount = async (userId, weekStart = getWeekStart()) => {
   const { count, error } = await supabase
     .from('sessions')
@@ -159,6 +198,8 @@ module.exports = {
   getTierLabel,
   getWeeklySessionBonus,
   getWeeklySessionCount,
+  getLifetimeSessionCount,
+  ensureTrialSessionAvailable,
   getSessionUsageSummary,
   ensureSessionAvailable,
 };

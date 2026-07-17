@@ -190,6 +190,23 @@ export const apiService = {
   },
 
   /**
+   * Reads the current advisor's email-alert on/off preference.
+   */
+  getNotificationPreference: async () => {
+    return fetchWithAuth('/notification-preference', { method: 'GET' });
+  },
+
+  /**
+   * Turns the current advisor's email alerts on or off.
+   */
+  setNotificationPreference: async (enabled) => {
+    return fetchWithAuth('/notification-preference', {
+      method: 'POST',
+      body: JSON.stringify({ enabled })
+    });
+  },
+
+  /**
    * Called after PayPal approves a subscription.
    * Records the subscription against the authenticated Supabase user.
    */

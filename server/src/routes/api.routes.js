@@ -18,7 +18,11 @@ const {
   adjustSessionAllowance,
 } = require('../controllers/session.controller');
 const { handleBotCheck } = require('../controllers/bot.controller');
-const { registerDevice } = require('../controllers/notification.controller');
+const {
+  registerDevice,
+  getNotificationPreference,
+  setNotificationPreference,
+} = require('../controllers/notification.controller');
 const { sendMessage } = require('../controllers/message.controller');
 const { getMembershipUsage } = require('../controllers/membership.controller');
 const {
@@ -105,6 +109,13 @@ router.get('/membership-usage', getMembershipUsage);
  * Caller: notification.service.js
  */
 router.post('/register-device', registerDevice);
+
+/**
+ * Reads/updates the current advisor's email-alert on/off preference.
+ * Caller: ExpertDashboardPage.jsx
+ */
+router.get('/notification-preference', getNotificationPreference);
+router.post('/notification-preference', setNotificationPreference);
 
 /**
  * Records a PayPal subscription approval for the authenticated student.

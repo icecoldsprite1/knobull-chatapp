@@ -6,6 +6,29 @@ const supabase = createClient(
 );
 
 /**
+ * Confirm the caller is an authorized advisor (row in public.admins).
+ * Throws an error carrying a statusCode for the caller to surface.
+ */
+const assertAdmin = async (userId) => {
+  const { data: adminRow, error } = await supabase
+    .from('admins')
+    .select('user_id')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    const err = new Error('Failed to verify advisor status.');
+    err.statusCode = 500;
+    throw err;
+  }
+  if (!adminRow) {
+    const err = new Error('Forbidden: Only authorized experts can access this resource.');
+    err.statusCode = 403;
+    throw err;
+  }
+};
+
+/**
  * Register a device token for push notifications.
  * Called when an Expert logs in and grants notification permission.
  */
@@ -55,4 +78,65 @@ const registerDevice = async (req, res) => {
   }
 };
 
-module.exports = { registerDevice };
+/**
+ * Read the current advisor's email-alert preference (on/off).
+ * Defaults to ON if the row/column isn't set yet.
+ */
+const getNotificationPreference = async (req, res) => {
+  const userId = req.user.sub;
+
+  try {
+    await assertAdmin(userId);
+
+    const { data, error } = await supabase
+      .from('admins')
+      .select('email_notifications')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Notification preference read error:', error);
+      return res.status(500).json({ error: 'Failed to load notification preference.' });
+    }
+
+    res.json({ emailNotifications: data?.email_notifications !== false });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || 'Internal Server Error' });
+  }
+};
+
+/**
+ * Turn the current advisor's email alerts on or off.
+ */
+const setNotificationPreference = async (req, res) => {
+  const userId = req.user.sub;
+  const { enabled } = req.body;
+
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: 'Field "enabled" must be true or false.' });
+  }
+
+  try {
+    await assertAdmin(userId);
+
+    const { error } = await supabase
+      .from('admins')
+      .update({ email_notifications: enabled })
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('Notification preference update error:', error);
+      return res.status(500).json({ error: 'Failed to update notification preference.' });
+    }
+
+    res.json({ emailNotifications: enabled });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || 'Internal Server Error' });
+  }
+};
+
+module.exports = {
+  registerDevice,
+  getNotificationPreference,
+  setNotificationPreference,
+};

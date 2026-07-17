@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Send, User, LogOut, Bell, Home } from 'lucide-react';
+import { Send, User, LogOut, Bell, Home, BookOpen, Mail } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { apiService } from '../services/api.service';
@@ -38,6 +38,8 @@ export default function ExpertDashboardPage({ user, onLogout }) {
   const [messages, setMessages] = useState([]); // Messages for the active session
   const [input, setInput] = useState(''); // Text input
   const [notificationsEnabled, setNotificationsEnabled] = useState(false); // UI toggle state for push alerts
+  const [emailAlerts, setEmailAlerts] = useState(null); // this advisor's email-alert preference (null = loading)
+  const [emailAlertsSaving, setEmailAlertsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('mine');
   const [queueError, setQueueError] = useState(null);
   const [pendingActions, setPendingActions] = useState({});
@@ -56,6 +58,30 @@ export default function ExpertDashboardPage({ user, onLogout }) {
   useEffect(() => {
     localStorage.setItem(`knobull-advisor-read-counts:${user.id}`, JSON.stringify(readCounts));
   }, [readCounts, user.id]);
+
+  // Load this advisor's email-alert preference once on mount.
+  useEffect(() => {
+    let cancelled = false;
+    apiService.getNotificationPreference()
+      .then((res) => { if (!cancelled) setEmailAlerts(res.emailNotifications !== false); })
+      .catch((err) => { console.error('Failed to load email-alert preference:', err); if (!cancelled) setEmailAlerts(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const toggleEmailAlerts = async () => {
+    if (emailAlerts === null || emailAlertsSaving) return;
+    const next = !emailAlerts;
+    setEmailAlertsSaving(true);
+    setEmailAlerts(next); // optimistic
+    try {
+      await apiService.setNotificationPreference(next);
+    } catch (err) {
+      console.error('Failed to update email-alert preference:', err);
+      setEmailAlerts(!next); // revert on failure
+    } finally {
+      setEmailAlertsSaving(false);
+    }
+  };
 
   const getUnreadCount = (session) => {
     if (session.expert_id !== user.id) return 0;
@@ -467,6 +493,25 @@ export default function ExpertDashboardPage({ user, onLogout }) {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={toggleEmailAlerts}
+                disabled={emailAlerts === null || emailAlertsSaving}
+                title={emailAlerts ? 'Email alerts are ON — click to turn off' : 'Email alerts are OFF — click to turn on'}
+                className={`flex items-center gap-2 text-sm font-semibold px-5 py-2.5 border rounded-xl transition-all shadow-sm hover:shadow-md disabled:opacity-60 disabled:cursor-not-allowed ${
+                  emailAlerts
+                    ? 'text-emerald-700 border-emerald-300 bg-emerald-50 hover:bg-emerald-100'
+                    : 'text-slate-600 border-slate-300 bg-white hover:bg-slate-100'
+                }`}
+              >
+                <Mail size={16} />
+                {emailAlerts === null ? 'Email alerts' : emailAlerts ? 'Email alerts: On' : 'Email alerts: Off'}
+              </button>
+              <Link
+                to="/guide"
+                className="flex items-center gap-2 text-slate-600 hover:text-blue-700 text-sm font-semibold px-5 py-2.5 border border-slate-300 hover:border-blue-300 hover:bg-blue-100 rounded-xl transition-all bg-white shadow-sm hover:shadow-md"
+              >
+                <BookOpen size={16}/> Guide
+              </Link>
               <Link
                 to="/"
                 className="flex items-center gap-2 text-slate-600 hover:text-blue-700 text-sm font-semibold px-5 py-2.5 border border-slate-300 hover:border-blue-300 hover:bg-blue-100 rounded-xl transition-all bg-white shadow-sm hover:shadow-md"

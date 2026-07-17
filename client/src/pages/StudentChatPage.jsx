@@ -5,6 +5,10 @@ import { supabase } from '../config/supabase';
 import { apiService } from '../services/api.service';
 import ChatBubble from '../components/ChatBubble';
 
+// Question the guest typed on the landing page before starting their trial; we
+// auto-send it once their session is ready so the trial feels seamless.
+const TRIAL_FIRST_MESSAGE_KEY = 'knobull_trial_first_message';
+
 /**
  * StudentChatPage Component
  *
@@ -29,6 +33,7 @@ export default function StudentChatPage({ user, onLogout }) {
   const [startingNew, setStartingNew] = useState(false);
   const bottomRef = useRef(null);
   const isInitializing = useRef(false);
+  const trialFirstMsgSent = useRef(false);
 
   const withTimeout = (promise, message) => {
     let timeoutId;
@@ -201,6 +206,42 @@ export default function StudentChatPage({ user, onLogout }) {
     };
   }, [session]);
 
+  // ==========================================
+  // TRIAL: AUTO-SEND THE QUESTION TYPED ON THE LANDING PAGE
+  // ==========================================
+  // A guest types their first question on the landing page; we stash it, start
+  // their trial session, then send it here so the chat opens already in motion.
+  useEffect(() => {
+    if (!session || trialFirstMsgSent.current) return;
+
+    const pending = sessionStorage.getItem(TRIAL_FIRST_MESSAGE_KEY);
+    if (!pending) return;
+
+    // Don't double-send if this session already has a student message.
+    if (messages.some((m) => m.sender_type === 'student')) {
+      sessionStorage.removeItem(TRIAL_FIRST_MESSAGE_KEY);
+      trialFirstMsgSent.current = true;
+      return;
+    }
+
+    trialFirstMsgSent.current = true;
+    sessionStorage.removeItem(TRIAL_FIRST_MESSAGE_KEY);
+
+    (async () => {
+      try {
+        const { message } = await apiService.sendMessage({ sessionId: session.id, content: pending });
+        if (message) {
+          setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+        }
+        await apiService.triggerBotCheck(session.id, 1).catch(console.error);
+      } catch (err) {
+        console.error('Failed to auto-send trial question:', err);
+        // Non-fatal: drop the text back into the composer so the user can resend.
+        setInput(pending);
+      }
+    })();
+  }, [session, messages]);
+
   // Auto-scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -271,22 +312,27 @@ export default function StudentChatPage({ user, onLogout }) {
     );
   }
 
-  // Weekly chat-session cap reached — show upsell.
+  // Chat-session cap reached — show an upsell. A trial guest is prompted to
+  // create a free account (which carries their trial over); a registered student
+  // who hit the weekly cap is pointed at membership plans.
   if (limitReached) {
+    const isTrialGuest = Boolean(user?.is_anonymous);
     return (
       <div className="h-screen flex items-center justify-center bg-blue-50 px-4">
         <div className="text-center bg-white rounded-2xl p-8 border border-amber-200 shadow-lg max-w-sm">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-amber-200 bg-amber-50">
             <Lock className="text-amber-600" size={26} />
           </div>
-          <h2 className="text-lg font-bold text-slate-900 mb-2">No chat sessions left this week</h2>
+          <h2 className="text-lg font-bold text-slate-900 mb-2">
+            {isTrialGuest ? 'Your free trial chat is complete' : 'No chat sessions left this week'}
+          </h2>
           <p className="text-slate-600 text-sm leading-relaxed mb-6">{limitReached}</p>
           <div className="grid gap-3">
             <button
-              onClick={() => navigate('/')}
+              onClick={() => navigate(isTrialGuest ? '/login' : '/')}
               className="w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700"
             >
-              View membership plans
+              {isTrialGuest ? 'Create your free account' : 'View membership plans'}
             </button>
             <Link to="/" className="text-blue-600 hover:text-blue-700 text-sm font-semibold underline">
               Back to home
@@ -335,6 +381,21 @@ export default function StudentChatPage({ user, onLogout }) {
             )}
           </div>
         </div>
+
+        {/* Trial banner — anonymous guests are on their one free trial chat */}
+        {user?.is_anonymous && (
+          <div className="px-5 py-2.5 bg-amber-50 border-b border-amber-100 flex items-center justify-between gap-3">
+            <p className="text-[13px] text-amber-800 leading-snug">
+              <span className="font-semibold">Free trial chat.</span> Sign up free to save this conversation and keep chatting.
+            </p>
+            <button
+              onClick={() => navigate('/login')}
+              className="shrink-0 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold px-3 py-1.5 transition-colors"
+            >
+              Sign up free
+            </button>
+          </div>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-slate-50/50">
