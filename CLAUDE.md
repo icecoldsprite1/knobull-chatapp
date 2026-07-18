@@ -147,7 +147,17 @@ PAYPAL_UNLIMITED_YEARLY_PLAN_ID=
 PAYPAL_WEBHOOK_ID=
 FIREBASE_SERVICE_ACCOUNT_JSON=
 FIREBASE_SERVICE_ACCOUNT_PATH=
+RESEND_API_KEY=
+NOTIFY_FROM_EMAIL=
+ADVISOR_NOTIFY_EMAIL=
 ```
+
+Advisor email alerts (Resend): `RESEND_API_KEY` enables server-side emails on new
+chat / new student message (`server/src/services/email.service.js`). Recipients
+are read live from `admins` (each toggles their own alerts on the dashboard);
+`NOTIFY_FROM_EMAIL` sets the sender (a verified domain is required to reach
+addresses other than the Resend account owner); `ADVISOR_NOTIFY_EMAIL` is an
+optional extra recipient. Unset `RESEND_API_KEY` = safe no-op. See `DEPLOY.md` §8.
 
 For Netlify, set env vars in the Netlify dashboard. Do not rely on local `.env` files.
 
@@ -161,6 +171,8 @@ Core tables:
 - `memberships`: subscription state, plan, weekly question limit, PayPal subscription ID.
 - `question_usage`: answered-question usage rows. A student question counts when an expert/admin reply records a usage row.
 - `device_tokens`: Firebase Cloud Messaging tokens for advisors.
+- `admins.email_notifications`: boolean (default true) per-admin email-alert
+  on/off toggle, added by `supabase_admin_email_notifications.sql`.
 
 Admin setup:
 
