@@ -75,7 +75,7 @@ const DAILY_STEPS = [
   },
   {
     title: 'Claim a chat',
-    body: 'From Unclaimed, click Claim to make the chat yours. Claiming prevents two advisors from replying to the same student. If you claimed one by mistake, use Unclaim to send it back to the queue.',
+    body: 'Open a chat from the Unclaimed tab (a red number there means chats are waiting), then tap "Claim this chat" — it becomes yours and moves to your Mine tab. Claiming prevents two advisors from replying to the same student. Claimed one by mistake? Use Unclaim to send it back to the queue.',
   },
   {
     title: 'Reply',
