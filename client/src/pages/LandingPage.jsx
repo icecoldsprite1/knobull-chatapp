@@ -11,6 +11,10 @@ const HCAPTCHA_SITEKEY = import.meta.env.VITE_HCAPTCHA_SITEKEY;
 // Where the guest's typed first question is stashed while we start their trial
 // session, so StudentChatPage can auto-send it once the session is ready.
 const TRIAL_FIRST_MESSAGE_KEY = 'knobull_trial_first_message';
+// Persists across sign-out (Supabase's signOut only clears its own auth keys, not
+// this one), so a visitor can't farm unlimited guest trials by signing out and
+// starting a fresh anonymous session. Only cleared if they wipe browser storage.
+const TRIAL_USED_KEY = 'knobull_trial_used';
 
 const MEMBERSHIP_PLANS = [
   {
@@ -105,6 +109,14 @@ export default function LandingPage({ user, isAdmin }) {
       return;
     }
 
+    // Logged-out visitor starting a NEW trial. If this browser already used its
+    // one free trial, block it — otherwise signing out and retrying would mint a
+    // fresh anonymous user and reset the cap (the infinite-trial exploit).
+    if (localStorage.getItem(TRIAL_USED_KEY)) {
+      setTrialError('You’ve already used your free trial chat. Create a free account (it’s free) to keep chatting with our experts.');
+      return;
+    }
+
     if (HCAPTCHA_SITEKEY && !trialCaptcha) {
       setTrialError('Please complete the security check to start your free trial.');
       return;
@@ -126,6 +138,9 @@ export default function LandingPage({ user, isAdmin }) {
         return;
       }
 
+      // Mark this browser's one free trial as used, so signing out and retrying
+      // can't start another anonymous trial session.
+      localStorage.setItem(TRIAL_USED_KEY, new Date().toISOString());
       sessionStorage.setItem(TRIAL_FIRST_MESSAGE_KEY, question);
       navigate('/chat');
     } catch (err) {
