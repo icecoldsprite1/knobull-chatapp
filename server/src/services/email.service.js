@@ -1,8 +1,8 @@
 /**
  * Email Notification Service
  *
- * Sends advisor alert emails via Resend (https://resend.com) using its plain
- * HTTPS API — no SDK dependency. Two triggers:
+ * Sends advisor alert emails on two triggers, via Gmail SMTP (Nodemailer) when a
+ * Gmail app password is configured, otherwise via the Resend HTTPS API:
  *   - a new chat session is created ("a student arrived")
  *   - a student sends a message ("a student texted")
  *
@@ -21,17 +21,21 @@
  *   NO manual recipient list to maintain. ADVISOR_NOTIFY_EMAIL may optionally add
  *   an extra always-on address (e.g. a shared inbox).
  *
- * CONFIG (server env / Netlify env):
- *   RESEND_API_KEY       required — from the Resend dashboard
- *   NOTIFY_FROM_EMAIL    optional — defaults to Resend's shared sandbox sender.
- *                        To reach MULTIPLE admin addresses, verify a domain in
- *                        Resend and set this to an address on it (the sandbox
- *                        sender only delivers to the Resend account owner).
- *   ADVISOR_NOTIFY_EMAIL optional — extra recipient(s), comma-separated
- *   FRONTEND_URL         optional — used to build the dashboard link
+ * CONFIG (server env / Netlify env) — set ONE transport:
+ *   Gmail (recommended — no domain needed, sends to anyone):
+ *     GMAIL_USER           the sending Gmail address (use a dedicated account)
+ *     GMAIL_APP_PASSWORD   16-char Google App Password (needs 2-Step Verification)
+ *   Resend (alternative — needs a verified domain to reach >1 address):
+ *     RESEND_API_KEY       from the Resend dashboard
+ *   Shared:
+ *     NOTIFY_FROM_EMAIL    optional — sender display for Resend; Gmail always
+ *                          sends from GMAIL_USER (Google requires it)
+ *     ADVISOR_NOTIFY_EMAIL optional — extra recipient(s), comma-separated
+ *     FRONTEND_URL         optional — used to build the dashboard link
  */
 
 const { createClient } = require('@supabase/supabase-js');
+const nodemailer = require('nodemailer');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -39,6 +43,24 @@ const supabase = createClient(
 );
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
+
+// Transport selection. Gmail SMTP (Nodemailer) is preferred when configured —
+// it needs no verified domain and can send to any recipient. Resend is the
+// fallback (but its free sandbox sender only reaches the account owner).
+const hasGmail = () => Boolean(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
+const hasResend = () => Boolean(process.env.RESEND_API_KEY);
+
+let gmailTransport = null;
+const getGmailTransport = () => {
+  if (!hasGmail()) return null;
+  if (!gmailTransport) {
+    gmailTransport = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
+    });
+  }
+  return gmailTransport;
+};
 
 // Best-effort anti-spam: don't email more than once per session per window.
 // On serverless (Netlify) this map resets on cold start, so it's a soft guard —
@@ -51,7 +73,7 @@ const lastEmailAt = {};
 const RECIPIENT_TTL_MS = 60 * 1000;
 let recipientCache = { emails: [], expires: 0 };
 
-const isConfigured = () => Boolean(process.env.RESEND_API_KEY);
+const isConfigured = () => hasGmail() || hasResend();
 
 /**
  * Resolve the current alert recipients: every opted-in admin's email, plus any
@@ -117,17 +139,39 @@ const renderHtml = (heading, message, link) => `
  */
 const sendEmail = async ({ subject, text, html }) => {
   if (!isConfigured()) {
-    console.log('[Email] RESEND_API_KEY not set — skipping alert.');
-    return false;
-  }
-  if (typeof fetch !== 'function') {
-    console.error('[Email] global fetch unavailable (needs Node 18+) — skipping alert.');
+    console.log('[Email] No transport configured (set GMAIL_USER + GMAIL_APP_PASSWORD, or RESEND_API_KEY) — skipping alert.');
     return false;
   }
 
   const to = await getRecipients();
   if (!to.length) {
     console.log('[Email] No opted-in admin recipients — skipping alert.');
+    return false;
+  }
+
+  // Preferred transport: Gmail SMTP via Nodemailer. No verified domain needed,
+  // and it can send to any recipient. Google requires the From to be GMAIL_USER.
+  const gmail = getGmailTransport();
+  if (gmail) {
+    try {
+      await gmail.sendMail({
+        from: `Knobull Alerts <${process.env.GMAIL_USER}>`,
+        to: to.join(', '),
+        subject,
+        text,
+        html,
+      });
+      console.log('[Email] Advisor alert sent (Gmail).');
+      return true;
+    } catch (err) {
+      console.error('[Email] Gmail send error:', err.message);
+      return false;
+    }
+  }
+
+  // Fallback transport: Resend HTTPS API.
+  if (typeof fetch !== 'function') {
+    console.error('[Email] global fetch unavailable (needs Node 18+) — skipping alert.');
     return false;
   }
 
@@ -149,7 +193,7 @@ const sendEmail = async ({ subject, text, html }) => {
       return false;
     }
 
-    console.log('[Email] Advisor alert sent.');
+    console.log('[Email] Advisor alert sent (Resend).');
     return true;
   } catch (err) {
     console.error('[Email] Send error:', err.message);

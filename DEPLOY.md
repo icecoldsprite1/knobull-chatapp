@@ -165,35 +165,40 @@ not unlock access by design.
 
 ---
 
-## 8. Advisor email notifications (Resend)
+## 8. Advisor email notifications
 
 Advisors get an email when a new chat starts and when a student sends a message.
-It's server-side only, contains no chat content (just a nudge + dashboard link),
-and is a **safe no-op until `RESEND_API_KEY` is set** — nothing breaks meanwhile.
-
-**Setup:**
-
-1. Create a free account at [resend.com](https://resend.com) (100 emails/day free).
-2. **API Keys → Create API Key** (Sending access). Copy the `re_…` value — shown once.
-3. Set `RESEND_API_KEY` in Netlify env (and `server/.env` for local). Redeploy.
-4. Run migration `supabase_admin_email_notifications.sql` (section 4) so the
-   per-admin toggle has its column.
+Server-side only, contains no chat content (just a nudge + dashboard link), and is
+a **safe no-op until a transport is configured** — nothing breaks meanwhile.
 
 **Recipients are automatic.** Every advisor in the `admins` table is included by
-default; there is no manual list to maintain. Each advisor can turn their own
-alerts on/off with the **"Email alerts"** button at the top of the dashboard.
-`ADVISOR_NOTIFY_EMAIL` can add an extra always-on address (e.g. a shared inbox).
+default; there is no manual list to maintain. Each can turn their own alerts on/off
+with the **"Email alerts"** button on the dashboard. `ADVISOR_NOTIFY_EMAIL` can add
+an extra always-on address (e.g. a shared inbox). Run migration
+`supabase_admin_email_notifications.sql` (section 4) so the toggle has its column.
 
-**⚠️ To reach more than one address, verify a domain.** With only the API key,
-Resend's sandbox sender (`onboarding@resend.dev`) delivers **only to the Resend
-account owner's own email**. To email all advisors:
+Pick **one** transport:
 
-1. Resend → **Domains → Add Domain** (e.g. `knobull.com`) and add the shown DNS records.
-2. Set `NOTIFY_FROM_EMAIL` to an address on that domain, e.g.
-   `Knobull Alerts <alerts@knobull.com>`.
+### Option A — Gmail (recommended; no domain needed, reaches everyone)
 
-**Verify it works:** with `RESEND_API_KEY` (and `ADVISOR_NOTIFY_EMAIL` = your
-inbox) in `server/.env`, run `npm run test:email --prefix server` — expect a
+1. Create a **dedicated** Gmail (e.g. `knobull.alerts@gmail.com`) — not a personal one.
+2. Enable **2-Step Verification**, then **Google Account → Security → App passwords**
+   and generate a 16-character app password.
+3. Set `GMAIL_USER` (the address) and `GMAIL_APP_PASSWORD` (the 16 chars) in
+   `server/.env` and the Netlify env. That's it — sends to all advisors, free
+   (~500/day). Handoff later = just share the Gmail login.
+
+### Option B — Resend (needs a verified domain to reach >1 address)
+
+1. Create a key at [resend.com](https://resend.com) → set `RESEND_API_KEY`.
+2. Its sandbox sender only delivers to the Resend account owner until you
+   **verify a domain** (Resend → Domains → Add Domain → add DNS records) and set
+   `NOTIFY_FROM_EMAIL` to an address on it (e.g. `alerts@send.knobull.com`).
+
+> If both are set, **Gmail takes precedence**.
+
+**Verify:** with a transport in `server/.env` (and `ADVISOR_NOTIFY_EMAIL` = an
+inbox you can check), run `npm run test:email --prefix server` — expect a
 "New chat started" email within ~1 minute. (Check spam.)
 
 ---
