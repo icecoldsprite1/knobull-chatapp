@@ -9,9 +9,10 @@
  * SECURITY / PRIVACY NOTES:
  *   - The Resend API key lives ONLY in the server env (RESEND_API_KEY). It is
  *     never sent to the browser.
- *   - Emails deliberately contain NO message content and NO student PII — just a
- *     nudge and a link to the dashboard, which is itself behind advisor auth.
- *     Email is not end-to-end encrypted, so we keep the conversation out of it.
+ *   - Emails are plain text with NO message content, NO student PII, and NO links
+ *     or formatting — just a short nudge to sign in to the dashboard. This keeps
+ *     the conversation out of unencrypted email AND improves inbox deliverability
+ *     (styled, link-heavy mail from a Gmail sender often gets flagged as spam).
  *   - If the service isn't configured, every function is a safe no-op. It never
  *     throws and never blocks the student's request.
  *
@@ -31,7 +32,6 @@
  *     NOTIFY_FROM_EMAIL    optional — sender display for Resend; Gmail always
  *                          sends from GMAIL_USER (Google requires it)
  *     ADVISOR_NOTIFY_EMAIL optional — extra recipient(s), comma-separated
- *     FRONTEND_URL         optional — used to build the dashboard link
  */
 
 const { createClient } = require('@supabase/supabase-js');
@@ -119,25 +119,14 @@ const getRecipients = async () => {
   return list;
 };
 
-const getDashboardLink = () => {
-  const base = (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
-  return base ? `${base}/dashboard` : null;
-};
-
-const renderHtml = (heading, message, link) => `
-  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#0f172a">
-    <h2 style="margin:0 0 8px;font-size:18px;color:#1d4ed8">${heading}</h2>
-    <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#334155">${message}</p>
-    ${link
-      ? `<a href="${link}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:10px">Open Advisor Dashboard</a>`
-      : `<p style="font-size:13px;color:#64748b">Open your Knobull advisor dashboard to respond.</p>`}
-    <p style="margin:24px 0 0;font-size:12px;color:#94a3b8">You're receiving this because you're a Knobull advisor. This alert contains no chat content — open the dashboard to view the conversation.</p>
-  </div>`;
-
 /**
  * Low-level send. Returns true on success, false on any failure (never throws).
+ *
+ * Emails are deliberately PLAIN TEXT with no links, formatting, or emoji — sent
+ * from a Gmail address, that reads like a normal personal note and is far less
+ * likely to be flagged as spam than a styled, link-heavy HTML template.
  */
-const sendEmail = async ({ subject, text, html }) => {
+const sendEmail = async ({ subject, text }) => {
   if (!isConfigured()) {
     console.log('[Email] No transport configured (set GMAIL_USER + GMAIL_APP_PASSWORD, or RESEND_API_KEY) — skipping alert.');
     return false;
@@ -159,7 +148,6 @@ const sendEmail = async ({ subject, text, html }) => {
         to: to.join(', '),
         subject,
         text,
-        html,
       });
       console.log('[Email] Advisor alert sent (Gmail).');
       return true;
@@ -184,7 +172,7 @@ const sendEmail = async ({ subject, text, html }) => {
         Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ from, to, subject, text, html }),
+      body: JSON.stringify({ from, to, subject, text }),
     });
 
     if (!resp.ok) {
@@ -210,12 +198,9 @@ const notifyAdvisorNewSession = async ({ sessionId, isTrialGuest = false } = {})
   if (sessionId) lastEmailAt[sessionId] = Date.now();
 
   const who = isTrialGuest ? 'A trial guest' : 'A student';
-  const link = getDashboardLink();
   return sendEmail({
-    subject: '🟢 New chat started on Knobull',
-    text: `${who} just started a new chat on Knobull and is waiting for help.` +
-      (link ? `\n\nOpen your dashboard: ${link}` : ''),
-    html: renderHtml('New chat started', `${who} just started a new chat and is waiting for help.`, link),
+    subject: 'New chat started on Knobull',
+    text: `${who} just started a new chat on Knobull and is waiting for help. Sign in to your advisor dashboard to respond.`,
   });
 };
 
@@ -230,12 +215,9 @@ const notifyAdvisorNewMessage = async ({ sessionId } = {}) => {
   }
   if (sessionId) lastEmailAt[sessionId] = now;
 
-  const link = getDashboardLink();
   return sendEmail({
-    subject: '💬 New message on Knobull',
-    text: 'A student sent a new message on Knobull and is waiting for a reply.' +
-      (link ? `\n\nOpen your dashboard: ${link}` : ''),
-    html: renderHtml('New student message', 'A student sent a new message and is waiting for a reply.', link),
+    subject: 'New student message on Knobull',
+    text: 'A student sent a new message on Knobull and is waiting for a reply. Sign in to your advisor dashboard to respond.',
   });
 };
 
