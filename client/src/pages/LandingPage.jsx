@@ -658,7 +658,7 @@ export default function LandingPage({ user, isAdmin }) {
                     Job search guidance, resume upgrade, time management, career choices, interview skills, work/life balance, presentation techniques, research process development, and many other critical learning/career development topics.
                   </p>
                   <p className="text-gray-600 text-sm leading-relaxed mt-2">
-                    Quick response when you need answers on skill building related topics 24/7.
+                    Quick response when you need answers on skill building related topics from 9 am to midnight 7 days each week.
                   </p>
                 </div>
 
