@@ -428,6 +428,12 @@ export default function LandingPage({ user, isAdmin }) {
             {hasActiveMembership ? 'Your Membership' : 'Knobull Membership'}
           </h2>
 
+          {!hasActiveMembership && !isAdmin && (
+            <p className="text-gray-600 text-sm md:text-base text-center -mt-6 mb-8">
+              Start a 30 day free account for:
+            </p>
+          )}
+
           <div className="bg-white rounded-2xl border border-gray-200 shadow-lg shadow-gray-900/5 p-6 md:p-8 space-y-6">
             {isAdmin ? (
               <>
@@ -685,7 +691,7 @@ export default function LandingPage({ user, isAdmin }) {
                       ? 'This account has Advisor Dashboard access. Use a non-admin student account to test subscriptions and student chat.'
                       : isVerifiedStudent
                       ? 'Select a monthly or yearly plan to continue with Knobull expert support.'
-                      : 'Create a free account for 2 chat sessions every week. Upgrade any time for more.'}
+                      : 'Create an account as a 30 day free trial for 2 chat sessions every week. Upgrade any time for more.'}
                   </p>
 
                   {isAdmin && (
