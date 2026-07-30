@@ -1,4 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
+const { notifyAdvisorNewMessage } = require('../services/email.service');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -33,9 +34,10 @@ const sendMessage = async (req, res) => {
   const userId = req.user.sub;
   const { sessionId, content } = req.body;
 
-  if (req.user.is_anonymous) {
-    return res.status(403).json({ error: 'Forbidden: Account required.' });
-  }
+  // Note: anonymous (trial guest) users are allowed here. Access is still tightly
+  // scoped below — a caller may only post to a session where they are the student
+  // or the assigned expert, and a guest can only ever be the student of their own
+  // trial session (they are never an admin/expert).
 
   if (!sessionId || !UUID_REGEX.test(sessionId)) {
     return res.status(400).json({ error: 'Invalid session ID format.' });
@@ -98,6 +100,13 @@ const sendMessage = async (req, res) => {
     if (insertError) {
       console.error('Message insert error:', insertError);
       return res.status(500).json({ error: 'Failed to send message.' });
+    }
+
+    // Email the advisor(s) when a STUDENT sends a message (not when an expert
+    // replies). Rate-limited per session inside the service. Fire-and-forget so
+    // it never delays the message response.
+    if (senderType === 'student') {
+      notifyAdvisorNewMessage({ sessionId }).catch(console.error);
     }
 
     res.json({ message });

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Send, User, LogOut, Bell, Home } from 'lucide-react';
+import { Send, User, LogOut, Bell, Home, BookOpen, Mail, CheckCircle, Info } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../config/supabase';
 import { apiService } from '../services/api.service';
@@ -38,6 +38,8 @@ export default function ExpertDashboardPage({ user, onLogout }) {
   const [messages, setMessages] = useState([]); // Messages for the active session
   const [input, setInput] = useState(''); // Text input
   const [notificationsEnabled, setNotificationsEnabled] = useState(false); // UI toggle state for push alerts
+  const [emailAlerts, setEmailAlerts] = useState(null); // this advisor's email-alert preference (null = loading)
+  const [emailAlertsSaving, setEmailAlertsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('mine');
   const [queueError, setQueueError] = useState(null);
   const [pendingActions, setPendingActions] = useState({});
@@ -56,6 +58,30 @@ export default function ExpertDashboardPage({ user, onLogout }) {
   useEffect(() => {
     localStorage.setItem(`knobull-advisor-read-counts:${user.id}`, JSON.stringify(readCounts));
   }, [readCounts, user.id]);
+
+  // Load this advisor's email-alert preference once on mount.
+  useEffect(() => {
+    let cancelled = false;
+    apiService.getNotificationPreference()
+      .then((res) => { if (!cancelled) setEmailAlerts(res.emailNotifications !== false); })
+      .catch((err) => { console.error('Failed to load email-alert preference:', err); if (!cancelled) setEmailAlerts(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const toggleEmailAlerts = async () => {
+    if (emailAlerts === null || emailAlertsSaving) return;
+    const next = !emailAlerts;
+    setEmailAlertsSaving(true);
+    setEmailAlerts(next); // optimistic
+    try {
+      await apiService.setNotificationPreference(next);
+    } catch (err) {
+      console.error('Failed to update email-alert preference:', err);
+      setEmailAlerts(!next); // revert on failure
+    } finally {
+      setEmailAlertsSaving(false);
+    }
+  };
 
   const getUnreadCount = (session) => {
     if (session.expert_id !== user.id) return 0;
@@ -272,37 +298,45 @@ export default function ExpertDashboardPage({ user, onLogout }) {
   // ==========================================
 
   /**
-   * Fired when an Expert clicks a card in the Queue
-   * If the session is unassigned, it officially assigns this Expert's ID to it via API.
+   * Fired when an Expert clicks a card in the Queue. Opens the chat to read it.
+   * It does NOT claim automatically — claiming is an explicit "Claim this chat"
+   * button inside the chat view, so advisors always understand what's happening.
    */
-  const handleSelectSession = async (sessionData) => {
+  const handleSelectSession = (sessionData) => {
+    // Someone else's open session stays read-only from the queue.
+    if (isOpenSession(sessionData) && sessionData.expert_id && sessionData.expert_id !== user.id) {
+      alert('This chat is already claimed by another advisor.');
+      return;
+    }
+    markSessionRead(sessionData);
+    setActiveSession(sessionData);
+  };
+
+  /**
+   * Explicitly claim the open chat so this advisor can reply. Triggered by the
+   * "Claim this chat" button in the chat view.
+   */
+  const handleClaimSession = async () => {
+    if (!activeSession) return;
+
+    const actionKey = `claim:${activeSession.id}`;
+    if (pendingActions[actionKey]) return;
+
     try {
-      // Resolved sessions are read-only history — just open them.
-      if (!isOpenSession(sessionData)) {
-        markSessionRead(sessionData);
-        setActiveSession(sessionData);
-        return;
-      }
-
-      if (sessionData.expert_id && sessionData.expert_id !== user.id) {
-        alert('This session is already claimed by another advisor.');
-        return;
-      }
-
-      let openedSession = sessionData;
-
-      if (!sessionData.expert_id) {
-        // Ping backend to safely claim it (handles race conditions if 2 experts click at once)
-        await apiService.claimSession(sessionData.id);
-        openedSession = { ...sessionData, expert_id: user.id };
-        fetchSessions(); // visually update the queue immediately
-      }
-      
-      // Open the chat UI
-      markSessionRead(openedSession);
-      setActiveSession(openedSession);
+      setPendingActions((prev) => ({ ...prev, [actionKey]: true }));
+      // Backend safely assigns the session (handles two advisors racing to claim).
+      await apiService.claimSession(activeSession.id);
+      const claimed = { ...activeSession, expert_id: user.id };
+      markSessionRead(claimed);
+      setActiveSession(claimed);
+      setActiveTab('mine');
+      fetchSessions();
     } catch (err) {
-      alert("Error opening session: " + err.message);
+      alert(err.message || 'Could not claim this chat — it may have just been claimed by someone else.');
+      setActiveSession(null);
+      fetchSessions();
+    } finally {
+      setPendingActions((prev) => ({ ...prev, [actionKey]: false }));
     }
   };
 
@@ -467,6 +501,25 @@ export default function ExpertDashboardPage({ user, onLogout }) {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={toggleEmailAlerts}
+                disabled={emailAlerts === null || emailAlertsSaving}
+                title={emailAlerts ? 'Email alerts are ON — click to turn off' : 'Email alerts are OFF — click to turn on'}
+                className={`flex items-center gap-2 text-sm font-semibold px-5 py-2.5 border rounded-xl transition-all shadow-sm hover:shadow-md disabled:opacity-60 disabled:cursor-not-allowed ${
+                  emailAlerts
+                    ? 'text-emerald-700 border-emerald-300 bg-emerald-50 hover:bg-emerald-100'
+                    : 'text-slate-600 border-slate-300 bg-white hover:bg-slate-100'
+                }`}
+              >
+                <Mail size={16} />
+                {emailAlerts === null ? 'Email alerts' : emailAlerts ? 'Email alerts: On' : 'Email alerts: Off'}
+              </button>
+              <Link
+                to="/guide"
+                className="flex items-center gap-2 text-slate-600 hover:text-blue-700 text-sm font-semibold px-5 py-2.5 border border-slate-300 hover:border-blue-300 hover:bg-blue-100 rounded-xl transition-all bg-white shadow-sm hover:shadow-md"
+              >
+                <BookOpen size={16}/> Guide
+              </Link>
               <Link
                 to="/"
                 className="flex items-center gap-2 text-slate-600 hover:text-blue-700 text-sm font-semibold px-5 py-2.5 border border-slate-300 hover:border-blue-300 hover:bg-blue-100 rounded-xl transition-all bg-white shadow-sm hover:shadow-md"
@@ -479,25 +532,49 @@ export default function ExpertDashboardPage({ user, onLogout }) {
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 mb-6">
-            {QUEUE_TABS.map((tab) => (
-            <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={`px-4 py-2 rounded-xl text-sm font-semibold border transition-all ${
-                  activeTab === tab.key
-                    ? 'bg-slate-900 text-white border-slate-900 shadow-md shadow-slate-900/10'
-                    : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-700'
-                }`}
-              >
-                {tab.label}
-                <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${
-                  activeTab === tab.key ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-500'
-                }`}>
-                  {tabCounts[tab.key]}
-                </span>
-              </button>
-            ))}
+          <div className="flex flex-wrap gap-2 mb-3">
+            {QUEUE_TABS.map((tab) => {
+              const isActive = activeTab === tab.key;
+              // Attention badge: Unclaimed = chats waiting to be claimed;
+              // Mine = unread messages in chats you're already handling.
+              let badge = tabCounts[tab.key] || 0;
+              let attention = false;
+              if (tab.key === 'unclaimed' && badge > 0) attention = true;
+              if (tab.key === 'mine' && mineUnreadTotal > 0) { badge = mineUnreadTotal; attention = true; }
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`px-4 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                    isActive
+                      ? 'bg-slate-900 text-white border-slate-900 shadow-md shadow-slate-900/10'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-700'
+                  }`}
+                >
+                  {tab.label}
+                  {badge > 0 && (
+                    <span className={`ml-2 text-xs px-2 py-0.5 rounded-full font-bold ${
+                      attention
+                        ? 'bg-red-500 text-white'
+                        : isActive ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      {badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* How claiming works — plain-language hint */}
+          <div className="mb-6 flex items-start gap-2 rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3">
+            <Info size={16} className="text-blue-600 mt-0.5 shrink-0" />
+            <p className="text-xs leading-relaxed text-slate-600">
+              New student requests arrive under <span className="font-semibold text-slate-800">Unclaimed</span> (a red number appears).
+              Open one and tap <span className="font-semibold text-slate-800">Claim this chat</span> to start — it then moves to{' '}
+              <span className="font-semibold text-slate-800">Mine</span>. A red number on{' '}
+              <span className="font-semibold text-slate-800">Mine</span> means a student you're helping sent a new message.
+            </p>
           </div>
 
           {queueError && (
@@ -644,7 +721,7 @@ export default function ExpertDashboardPage({ user, onLogout }) {
                       {isResolved ? 'Resolved' : isMine ? 'Active Session' : isClaimedByOther ? 'Claimed' : 'Unclaimed'}
                     </p>
                     <span className={`text-xs font-bold uppercase tracking-wider ${isResolved ? 'text-slate-400' : isMine ? 'text-blue-600 group-hover:underline' : isClaimedByOther ? 'text-slate-400' : 'text-blue-500'}`}>
-                      {isResolved ? 'View' : isMine ? 'Resume →' : isClaimedByOther ? 'Assigned' : 'Claim →'}
+                      {isResolved ? 'View' : isMine ? 'Resume →' : isClaimedByOther ? 'Assigned' : 'Open to claim →'}
                     </span>
                   </div>
                 </div>
@@ -698,6 +775,15 @@ export default function ExpertDashboardPage({ user, onLogout }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {isOpenSession(activeSession) && !activeSession.expert_id && (
+              <button
+                onClick={handleClaimSession}
+                disabled={Boolean(pendingActions[`claim:${activeSession.id}`])}
+                className="flex items-center gap-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 px-3.5 py-1.5 rounded-lg transition-all shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <CheckCircle size={14} /> {pendingActions[`claim:${activeSession.id}`] ? 'Claiming…' : 'Claim this chat'}
+              </button>
+            )}
             {isOpenSession(activeSession) && activeSession.expert_id === user.id && (
               <>
                 <button
@@ -728,8 +814,12 @@ export default function ExpertDashboardPage({ user, onLogout }) {
           <div ref={bottomRef} />
         </div>
 
-        {/* Input, or resolved notice */}
-        {isOpenSession(activeSession) ? (
+        {/* Input area: resolved (read-only) / claimed by me (send) / not yet claimed (claim CTA) */}
+        {!isOpenSession(activeSession) ? (
+          <div className="p-4 bg-slate-50 border-t border-slate-200 text-center text-sm font-medium text-slate-500">
+            This chat session has been resolved and is read-only.
+          </div>
+        ) : activeSession.expert_id === user.id ? (
           <form onSubmit={sendMessage} className="p-4 bg-white border-t border-blue-50 flex gap-3 shadow-[0_-4px_20px_-15px_rgba(0,0,0,0.1)]">
             <input
               value={input}
@@ -742,8 +832,17 @@ export default function ExpertDashboardPage({ user, onLogout }) {
             </button>
           </form>
         ) : (
-          <div className="p-4 bg-slate-50 border-t border-slate-200 text-center text-sm font-medium text-slate-500">
-            This chat session has been resolved and is read-only.
+          <div className="p-5 bg-blue-50 border-t border-blue-100 text-center">
+            <p className="text-sm font-semibold text-slate-800 mb-1">You haven't claimed this chat yet</p>
+            <p className="text-xs text-slate-500 mb-4">Claim it to start replying. It will move to your <span className="font-semibold">Mine</span> tab.</p>
+            <button
+              onClick={handleClaimSession}
+              disabled={Boolean(pendingActions[`claim:${activeSession.id}`])}
+              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-xl transition-all shadow-md shadow-blue-600/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <CheckCircle size={18} />
+              {pendingActions[`claim:${activeSession.id}`] ? 'Claiming…' : 'Claim this chat'}
+            </button>
           </div>
         )}
       </div>

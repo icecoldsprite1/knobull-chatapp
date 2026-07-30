@@ -7,6 +7,7 @@ import LandingPage from './pages/LandingPage';
 import StudentAuthPage from './pages/StudentAuthPage';
 import StudentChatPage from './pages/StudentChatPage';
 import ExpertDashboardPage from './pages/ExpertDashboardPage';
+import AdminGuidePage from './pages/AdminGuidePage';
 import AuthCallbackPage from './pages/AuthCallbackPage';
 import SubscriptionConfirmationPage from './pages/SubscriptionConfirmationPage';
 
@@ -127,18 +128,21 @@ export default function App() {
   // ==========================================
   
   /**
-   * ProtectedStudentRoute - Requires a verified, non-anonymous email user
+   * ProtectedStudentRoute - Allows the chat experience for:
+   *   - anonymous trial guests (one free trial session; backend enforces the cap)
+   *   - registered students with a verified email
    */
   const ProtectedStudentRoute = ({ children }) => {
     if (authLoading) return <LoadingSpinner />;
-    
-    // Must be logged in with a verified email
-    if (!user || user.is_anonymous) {
+
+    // Not signed in at all — send to login/signup.
+    if (!user) {
       return <Navigate to="/login" replace />;
     }
-    
-    // Must have verified email
-    if (!user.email_confirmed_at) {
+
+    // Registered (non-anonymous) users must have verified their email. Anonymous
+    // trial guests are allowed through so they can use their free trial chat.
+    if (!user.is_anonymous && !user.email_confirmed_at) {
       return <Navigate to="/login" replace />;
     }
 
@@ -194,6 +198,13 @@ export default function App() {
       <Route path="/dashboard" element={
         <ProtectedAdminRoute>
           <ExpertDashboardPage user={user} onLogout={handleLogout} />
+        </ProtectedAdminRoute>
+      } />
+
+      {/* Advisor operating guide (admin-only) */}
+      <Route path="/guide" element={
+        <ProtectedAdminRoute>
+          <AdminGuidePage />
         </ProtectedAdminRoute>
       } />
 

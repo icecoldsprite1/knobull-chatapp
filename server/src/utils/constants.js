@@ -8,8 +8,14 @@ const GUIDE_SCRIPT = {
 const FREE_WEEKLY_SESSIONS = 2;
 const STANDARD_WEEKLY_SESSIONS = 5;
 
+// Lifetime free-trial cap for a not-yet-registered guest (anonymous auth user).
+// A guest may try the service with exactly this many real chat sessions total,
+// after which they must sign up for a free account to continue.
+const TRIAL_TOTAL_SESSIONS = 1;
+
 module.exports = {
   GUIDE_SCRIPT,
   FREE_WEEKLY_SESSIONS,
   STANDARD_WEEKLY_SESSIONS,
+  TRIAL_TOTAL_SESSIONS,
 };

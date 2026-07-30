@@ -1,10 +1,20 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BookOpen, ShieldCheck, Send, Library, LogOut, MessageCircle, CreditCard, AlertTriangle, X, Users, Settings } from 'lucide-react';
+import HCaptcha from '@hcaptcha/react-hcaptcha';
 import LoginForm from '../components/LoginForm';
 import PayPalSubscriptionButton from '../components/PayPalSubscriptionButton';
 import { supabase } from '../config/supabase';
 import { apiService } from '../services/api.service';
+
+const HCAPTCHA_SITEKEY = import.meta.env.VITE_HCAPTCHA_SITEKEY;
+// Where the guest's typed first question is stashed while we start their trial
+// session, so StudentChatPage can auto-send it once the session is ready.
+const TRIAL_FIRST_MESSAGE_KEY = 'knobull_trial_first_message';
+// Persists across sign-out (Supabase's signOut only clears its own auth keys, not
+// this one), so a visitor can't farm unlimited guest trials by signing out and
+// starting a fresh anonymous session. Only cleared if they wipe browser storage.
+const TRIAL_USED_KEY = 'knobull_trial_used';
 
 const MEMBERSHIP_PLANS = [
   {
@@ -61,55 +71,86 @@ export default function LandingPage({ user, isAdmin }) {
   const [showPlanManagement, setShowPlanManagement] = useState(false);
 
   // ==========================================
-  // GUEST PREVIEW CHAT (local state only, no database)
+  // GUEST FREE-TRIAL CHAT LAUNCHER
+  // A not-yet-registered visitor can start ONE real chat session to try the
+  // service via Supabase anonymous auth. The backend enforces the 1-session
+  // trial cap; afterwards they create a free account, which carries the trial
+  // conversation over (their anonymous user is converted, not replaced).
   // ==========================================
-  const PREVIEW_LIMIT = 2;
-  const [previewMessages, setPreviewMessages] = useState([
-    { sender: 'bot', text: "👋 Hi! I'm the Knobull Guide. I can connect you with learning and career experts. What's on your mind?" }
-  ]);
-  const [previewInput, setPreviewInput] = useState('');
-  const [previewCount, setPreviewCount] = useState(0);
-  const [showSignupPrompt, setShowSignupPrompt] = useState(false);
+  const [trialInput, setTrialInput] = useState('');
+  const [trialStarting, setTrialStarting] = useState(false);
+  const [trialError, setTrialError] = useState('');
+  const [trialCaptcha, setTrialCaptcha] = useState(null);
+  const trialCaptchaRef = useRef(null);
+
   const [membership, setMembership] = useState(null);
   const [membershipLoading, setMembershipLoading] = useState(false);
   const [billingAction, setBillingAction] = useState('');
   const [billingError, setBillingError] = useState('');
   const [pendingBillingAction, setPendingBillingAction] = useState(null);
   const [membershipUsage, setMembershipUsage] = useState(null);
-  const previewBottomRef = useRef(null);
 
-  const handlePreviewSend = (e) => {
-    e.preventDefault();
-    if (!previewInput.trim()) return;
+  const startGuestTrial = async (e) => {
+    if (e) e.preventDefault();
+    if (trialStarting) return;
+    setTrialError('');
 
-    const userMsg = previewInput.trim();
-    setPreviewInput('');
+    const question = trialInput.trim();
+    if (!question) {
+      setTrialError('Type a question to start your free chat.');
+      return;
+    }
 
-    // Add user message
-    setPreviewMessages((prev) => [...prev, { sender: 'user', text: userMsg }]);
-    const newCount = previewCount + 1;
-    setPreviewCount(newCount);
+    // Already signed in — a verified student, or a guest already mid-trial. Just
+    // go to chat with the typed question; don't start a second anonymous identity.
+    if (user) {
+      sessionStorage.setItem(TRIAL_FIRST_MESSAGE_KEY, question);
+      navigate('/chat');
+      return;
+    }
 
-    // Bot response after a short delay
-    setTimeout(() => {
-      if (newCount >= PREVIEW_LIMIT) {
-        setPreviewMessages((prev) => [...prev, { 
-          sender: 'bot', 
-          text: "I'd love to connect you with an expert who can help with that! Create a free account — you get 2 chat sessions every week. 🎓"
-        }]);
-        setShowSignupPrompt(true);
-      } else {
-        setPreviewMessages((prev) => [...prev, { 
-          sender: 'bot', 
-          text: "Great question! Our experts specialize in exactly this type of guidance. Send one more message, or create a free account to chat with a real expert!" 
-        }]);
+    // Logged-out visitor starting a NEW trial. If this browser already used its
+    // one free trial, block it — otherwise signing out and retrying would mint a
+    // fresh anonymous user and reset the cap (the infinite-trial exploit).
+    if (localStorage.getItem(TRIAL_USED_KEY)) {
+      setTrialError('You’ve already used your free trial chat. Create a free account (it’s free) to keep chatting with our experts.');
+      return;
+    }
+
+    if (HCAPTCHA_SITEKEY && !trialCaptcha) {
+      setTrialError('Please complete the security check to start your free trial.');
+      return;
+    }
+
+    setTrialStarting(true);
+    try {
+      const { error } = await supabase.auth.signInAnonymously(
+        HCAPTCHA_SITEKEY ? { options: { captchaToken: trialCaptcha } } : undefined
+      );
+
+      if (error) {
+        const anonDisabled = /anonymous/i.test(error.message || '');
+        setTrialError(
+          anonDisabled
+            ? 'Free trial is temporarily unavailable. Please create a free account to start chatting.'
+            : (error.message || 'Could not start your free trial. Please try again.')
+        );
+        return;
       }
-      
-      // Auto-scroll
-      setTimeout(() => {
-        previewBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 50);
-    }, 800);
+
+      // Mark this browser's one free trial as used, so signing out and retrying
+      // can't start another anonymous trial session.
+      localStorage.setItem(TRIAL_USED_KEY, new Date().toISOString());
+      sessionStorage.setItem(TRIAL_FIRST_MESSAGE_KEY, question);
+      navigate('/chat');
+    } catch (err) {
+      console.error('Guest trial start failed:', err);
+      setTrialError('Could not start your free trial. Please try again.');
+    } finally {
+      setTrialStarting(false);
+      setTrialCaptcha(null);
+      trialCaptchaRef.current?.resetCaptcha();
+    }
   };
 
   // Navigate student based on auth state
@@ -387,6 +428,12 @@ export default function LandingPage({ user, isAdmin }) {
             {hasActiveMembership ? 'Your Membership' : 'Knobull Membership'}
           </h2>
 
+          {!hasActiveMembership && !isAdmin && (
+            <p className="text-gray-600 text-sm md:text-base text-center -mt-6 mb-8">
+              Start a 30 day free account for:
+            </p>
+          )}
+
           <div className="bg-white rounded-2xl border border-gray-200 shadow-lg shadow-gray-900/5 p-6 md:p-8 space-y-6">
             {isAdmin ? (
               <>
@@ -602,27 +649,30 @@ export default function LandingPage({ user, isAdmin }) {
                   </div>
                 )}
 
-                {/* Major Time Savings */}
+                {/* Major Time + Money Savings */}
                 <div>
-                  <h3 className="text-base font-bold text-gray-900 mb-1">Major Time Savings</h3>
+                  <h3 className="text-base font-bold text-gray-900 mb-1">Major Time + Money Savings</h3>
                   <p className="text-gray-600 text-sm leading-relaxed">
-                    Access to a top ranked academic search engine, direct links to research sources, student focused news articles, online courses, career growth coaching, and learning or career expert support.
+                    <span className="font-semibold text-gray-900">All users</span> gain free access to a top ranked academic search engine, direct links to research sources, student focused news articles, online courses. <span className="font-semibold text-gray-900">Members</span> can ask learning/career experts questions and receive guidance with no scheduling hassles, missing time from work/school, or expensive consults.
                   </p>
                 </div>
 
-                {/* Learning Career Expert Service Examples */}
+                {/* Learning Career Expert Support Examples */}
                 <div>
-                  <h3 className="text-base font-bold text-gray-900 mb-1">Learning Career Expert Service Examples</h3>
+                  <h3 className="text-base font-bold text-gray-900 mb-1">Learning Career Expert Support Examples</h3>
                   <p className="text-gray-600 text-sm leading-relaxed">
-                    Research guidance, time management, study success, picking a major, tough teacher tips, job search support, tutoring options, work/life balance, and presentation guidance.
+                    Job search guidance, resume upgrade, time management, career choices, interview skills, work/life balance, presentation techniques, research process development, and many other critical learning/career development topics.
+                  </p>
+                  <p className="text-gray-600 text-sm leading-relaxed mt-2">
+                    Quick response when you need answers on skill building related topics from 9 am to midnight 7 days each week.
                   </p>
                 </div>
 
-                {/* No long waits */}
+                {/* Learning and Career Experts */}
                 <div>
-                  <h3 className="text-base font-bold text-gray-900 mb-1">No long waits</h3>
+                  <h3 className="text-base font-bold text-gray-900 mb-1">Learning and Career Experts</h3>
                   <p className="text-gray-600 text-sm leading-relaxed">
-                    Quick response when you need answers on learning and career growth topics.
+                    Chat with experts 1:1 that have pragmatic knowledge and experience—anytime, anywhere.
                   </p>
                 </div>
 
@@ -641,7 +691,7 @@ export default function LandingPage({ user, isAdmin }) {
                       ? 'This account has Advisor Dashboard access. Use a non-admin student account to test subscriptions and student chat.'
                       : isVerifiedStudent
                       ? 'Select a monthly or yearly plan to continue with Knobull expert support.'
-                      : 'Create a free account for 2 chat sessions every week. Upgrade any time for more.'}
+                      : 'Create an account as a 30 day free trial for 2 chat sessions every week. Upgrade any time for more.'}
                   </p>
 
                   {isAdmin && (
@@ -704,17 +754,17 @@ export default function LandingPage({ user, isAdmin }) {
         </div>
       </section>
 
-      {/* ===================== GUEST PREVIEW CHAT ===================== */}
+      {/* ===================== GUEST FREE-TRIAL CHAT ===================== */}
       {!hasActiveMembership && !isAdmin && (
         <section id="preview-chat" className="w-full bg-gray-50 py-10 md:py-14 border-b border-gray-200">
         <div className="max-w-2xl mx-auto px-6">
           <h2 className="text-2xl md:text-3xl font-bold text-gray-900 text-center mb-2 tracking-tight">
-            {isVerifiedStudent ? 'Preview Expert Chat' : 'Try It Out'}
+            {isVerifiedStudent ? 'Start an Expert Chat' : 'Try It Free'}
           </h2>
           <p className="text-gray-500 text-sm text-center mb-8">
             {isVerifiedStudent
-              ? 'Send a sample question before choosing your membership.'
-              : 'Send a message to see how Knobull expert chat works - no account needed.'}
+              ? 'Ask a question to open a chat with a Knobull expert.'
+              : 'Ask a question to start one free chat with a real Knobull expert — no account needed. Sign up free afterward to keep chatting.'}
           </p>
 
           <div className="bg-white rounded-2xl border border-gray-200 shadow-lg shadow-gray-900/5 overflow-hidden">
@@ -727,53 +777,71 @@ export default function LandingPage({ user, isAdmin }) {
                 <p className="text-white text-sm font-semibold">Knobull Support</p>
                 <div className="flex items-center gap-1.5">
                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
-                  <p className="text-[10px] text-blue-100 uppercase tracking-wider font-semibold">Preview Mode</p>
+                  <p className="text-[10px] text-blue-100 uppercase tracking-wider font-semibold">Advisors Online</p>
                 </div>
               </div>
             </div>
 
-            {/* Messages */}
-            <div className="h-64 overflow-y-auto p-5 space-y-4 bg-slate-50/50">
-              {previewMessages.map((m, i) => (
-                <div key={i} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] px-4 py-3 text-sm leading-relaxed ${
-                    m.sender === 'user'
-                      ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm'
-                      : 'bg-white border border-slate-200 text-slate-800 rounded-2xl rounded-tl-sm shadow-sm'
-                  }`}>
-                    <p className="whitespace-pre-wrap">{m.text}</p>
-                  </div>
+            {/* Intro + trial launcher */}
+            <div className="p-5 space-y-4 bg-slate-50/50">
+              <div className="flex justify-start">
+                <div className="max-w-[85%] px-4 py-3 text-sm leading-relaxed bg-white border border-slate-200 text-slate-800 rounded-2xl rounded-tl-sm shadow-sm">
+                  <p className="whitespace-pre-wrap">
+                    👋 Hi! I'm the Knobull Guide. Ask a learning or career question below and I'll connect you with a real expert.
+                    {!user && ' Your first chat is free — no account needed.'}
+                  </p>
                 </div>
-              ))}
-              <div ref={previewBottomRef} />
-            </div>
-
-            {/* Input or Signup Prompt */}
-            {showSignupPrompt ? (
-              <div className="p-5 bg-white border-t border-gray-100 text-center">
-                <p className="text-slate-600 text-sm mb-3 font-medium">
-                  Create a free account to chat with real experts
-                </p>
-                <button
-                  onClick={() => navigate('/login')}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-8 py-2.5 rounded-xl transition-all text-sm shadow-md shadow-blue-600/20 active:scale-[0.98]"
-                >
-                  Sign Up Free — 2 Chats / Week
-                </button>
               </div>
-            ) : (
-              <form onSubmit={handlePreviewSend} className="p-4 bg-white border-t border-gray-100 flex gap-3">
-                <input 
-                  value={previewInput}
-                  onChange={(e) => setPreviewInput(e.target.value)}
-                  className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder:text-slate-400 shadow-sm"
-                  placeholder="Try asking a question..."
+
+              <form onSubmit={startGuestTrial} className="space-y-3">
+                <textarea
+                  value={trialInput}
+                  onChange={(e) => setTrialInput(e.target.value)}
+                  rows={3}
+                  maxLength={5000}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder:text-slate-400 shadow-sm resize-none"
+                  placeholder="e.g. How do I improve my resume for a software internship?"
                 />
-                <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl transition-all active:scale-95">
+
+                {!user && HCAPTCHA_SITEKEY && (
+                  <div className="flex justify-center">
+                    <HCaptcha
+                      ref={trialCaptchaRef}
+                      sitekey={HCAPTCHA_SITEKEY}
+                      onVerify={(token) => { setTrialCaptcha(token); setTrialError(''); }}
+                      onExpire={() => setTrialCaptcha(null)}
+                      onError={() => setTrialCaptcha(null)}
+                    />
+                  </div>
+                )}
+
+                {trialError && (
+                  <p className="text-red-600 text-xs text-center">{trialError}</p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={trialStarting || !trialInput.trim() || (!user && !!HCAPTCHA_SITEKEY && !trialCaptcha)}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-xl transition-all text-sm shadow-md shadow-blue-600/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
+                >
                   <Send size={16} />
+                  {trialStarting
+                    ? 'Starting your chat…'
+                    : user
+                    ? 'Go to your chat'
+                    : 'Start my free chat'}
                 </button>
+
+                {!user && (
+                  <p className="text-center text-xs text-slate-400">
+                    Already have an account?{' '}
+                    <button type="button" onClick={() => navigate('/login')} className="text-blue-600 font-semibold hover:underline">
+                      Sign in
+                    </button>
+                  </p>
+                )}
               </form>
-            )}
+            </div>
           </div>
         </div>
         </section>

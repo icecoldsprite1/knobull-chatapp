@@ -1,5 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const { GUIDE_SCRIPT } = require('../utils/constants');
+const { notifyAdvisorNewSession } = require('../services/email.service');
 const {
   getWeekStart,
   hasActiveMembership,
@@ -7,6 +8,7 @@ const {
   getTierLabel,
   getSessionUsageSummary,
   ensureSessionAvailable,
+  ensureTrialSessionAvailable,
 } = require('../services/membership.service');
 
 // Initialize the Admin Supabase client in the controller context
@@ -48,10 +50,10 @@ const createSession = async (req, res) => {
   // Use the verified user ID from the JWT token, NOT the request body
   const userId = req.user.sub;
 
-  // 🚨 SECURITY: Block anonymous accounts from creating sessions
-  if (req.user.is_anonymous) {
-    return res.status(403).json({ error: 'Forbidden: Account required. Anonymous users cannot create sessions.' });
-  }
+  // Anonymous users are guests on the free trial: they may start ONE real chat
+  // session to try the service, then must sign up for a free account. Registered
+  // (non-anonymous) students are metered by the normal weekly cap.
+  const isTrialGuest = Boolean(req.user.is_anonymous);
 
   try {
     // 1. If the student already has an OPEN session, reuse it (no new count).
@@ -60,8 +62,13 @@ const createSession = async (req, res) => {
       return res.json({ session: openSession });
     }
 
-    // 2. Enforce the weekly chat-session limit for this tier (free/standard/unlimited).
-    await ensureSessionAvailable(userId);
+    // 2. Enforce the applicable cap: lifetime trial cap for guests, otherwise
+    //    the weekly chat-session limit for this tier (free/standard/unlimited).
+    if (isTrialGuest) {
+      await ensureTrialSessionAvailable(userId);
+    } else {
+      await ensureSessionAvailable(userId);
+    }
 
     // 3. Create the Session Row for the student
     const { data: session, error: sessionError } = await supabase
@@ -95,6 +102,10 @@ const createSession = async (req, res) => {
     if (messageError) {
       console.error("Bot failed to insert a welcome message:", messageError);
     }
+
+    // Alert the advisor(s) by email that a new chat just arrived. Fire-and-forget
+    // so a slow/failed email never delays the student's response.
+    notifyAdvisorNewSession({ sessionId: session.id, isTrialGuest }).catch(console.error);
 
     res.json({ session });
   } catch (error) {

@@ -76,6 +76,9 @@ baked into the client at **build time**; the rest are read by the function at
 | `PAYPAL_UNLIMITED_MONTHLY_PLAN_ID` | PayPal plan id |
 | `PAYPAL_UNLIMITED_YEARLY_PLAN_ID` | PayPal plan id |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | (push, optional) Full service-account JSON as one string |
+| `RESEND_API_KEY` | Advisor email alerts. From resend.com. Secret. Leave unset to disable email alerts (safe no-op). |
+| `NOTIFY_FROM_EMAIL` | (optional) Sender for alerts, e.g. `Knobull Alerts <alerts@knobull.com>`. Defaults to Resend's sandbox sender, which only delivers to the Resend account owner. |
+| `ADVISOR_NOTIFY_EMAIL` | (optional) Extra always-on recipient(s), comma-separated. Admins are auto-included from the `admins` table. |
 
 > The `VITE_PAYPAL_*_PLAN_ID` (client) and `PAYPAL_*_PLAN_ID` (server) values must
 > be the **same** plan ids — the client renders the button, the server verifies.
@@ -94,6 +97,7 @@ Run these in the **Supabase SQL Editor**, in order. They are idempotent
 5. `supabase_free_tier_sessions.sql`
 6. `supabase_advisor_queue_perf.sql`
 7. `supabase_messages_realtime_rls.sql`
+8. `supabase_admin_email_notifications.sql` (per-admin email-alert on/off toggle)
 
 > **Note:** the base tables `sessions`, `messages`, `admins`, and `device_tokens`
 > were created directly in Supabase (not committed as SQL). A brand-new Supabase
@@ -161,7 +165,45 @@ not unlock access by design.
 
 ---
 
-## 8. Post-deploy verification
+## 8. Advisor email notifications
+
+Advisors get an email when a new chat starts and when a student sends a message.
+Server-side only, contains no chat content (just a nudge + dashboard link), and is
+a **safe no-op until a transport is configured** — nothing breaks meanwhile.
+
+**Recipients are automatic.** Every advisor in the `admins` table is included by
+default; there is no manual list to maintain. Each can turn their own alerts on/off
+with the **"Email alerts"** button on the dashboard. `ADVISOR_NOTIFY_EMAIL` can add
+an extra always-on address (e.g. a shared inbox). Run migration
+`supabase_admin_email_notifications.sql` (section 4) so the toggle has its column.
+
+Pick **one** transport:
+
+### Option A — Gmail (recommended; no domain needed, reaches everyone)
+
+1. Create a **dedicated** Gmail (e.g. `knobull.alerts@gmail.com`) — not a personal one.
+2. Enable **2-Step Verification**, then **Google Account → Security → App passwords**
+   and generate a 16-character app password.
+3. Set `GMAIL_USER` (the address) and `GMAIL_APP_PASSWORD` (the 16 chars) in
+   `server/.env` and the Netlify env. That's it — sends to all advisors, free
+   (~500/day). Handoff later = just share the Gmail login.
+
+### Option B — Resend (needs a verified domain to reach >1 address)
+
+1. Create a key at [resend.com](https://resend.com) → set `RESEND_API_KEY`.
+2. Its sandbox sender only delivers to the Resend account owner until you
+   **verify a domain** (Resend → Domains → Add Domain → add DNS records) and set
+   `NOTIFY_FROM_EMAIL` to an address on it (e.g. `alerts@send.knobull.com`).
+
+> If both are set, **Gmail takes precedence**.
+
+**Verify:** with a transport in `server/.env` (and `ADVISOR_NOTIFY_EMAIL` = an
+inbox you can check), run `npm run test:email --prefix server` — expect a
+"New chat started" email within ~1 minute. (Check spam.)
+
+---
+
+## 9. Post-deploy verification
 
 - [ ] `https://chat.knobull.com/health` returns `{ "status": "ok" }`.
 - [ ] Sign up as a student (email verification + hCaptcha work).
@@ -170,10 +212,11 @@ not unlock access by design.
 - [ ] Advisor dashboard loads the queue; claim → reply → **Resolve**; resolved chat moves to the Resolved tab.
 - [ ] Subscribe with PayPal (sandbox first) → membership becomes `active` after the webhook; cap rises to 5 (standard) / unlimited.
 - [ ] A student cannot read another student's chat (RLS).
+- [ ] (If `RESEND_API_KEY` is set) Starting a chat emails the advisor(s); toggling "Email alerts" off on the dashboard stops that advisor's alerts.
 
 ---
 
-## 9. Free-tier notes & limits
+## 10. Free-tier notes & limits
 
 - **Netlify free:** ~100 GB bandwidth, 125k function invocations/mo, 300 build min/mo.
   Every `/api/*` call is one invocation; fine at launch scale.
@@ -182,15 +225,17 @@ not unlock access by design.
 - **Student chat polls every 3s** (Realtime + RLS is unreliable for non-admin
   subscribers). This hits Supabase directly (not Netlify functions) and grows with
   concurrent open chats. Fine at launch; the follow-up below removes it.
-- **Push notifications are optional and off by default:** `firebase-admin` is not in
-  `server/package.json`. To enable, add it as a dependency and set
-  `FIREBASE_SERVICE_ACCOUNT_JSON`. The `client/public/firebase-messaging-sw.js`
-  service worker also needs the Firebase web config (service workers can't read
-  `VITE_*` env, so those values are set in that file).
+- **Advisor notifications = email (Resend), section 8.** This is the active
+  notification channel. Browser **push (Firebase) is optional and dormant:**
+  `firebase-admin` is not in `server/package.json`. To enable push, add it as a
+  dependency and set `FIREBASE_SERVICE_ACCOUNT_JSON`; the
+  `client/public/firebase-messaging-sw.js` service worker also needs the Firebase
+  web config (service workers can't read `VITE_*` env, so those values are set in
+  that file). Email and push can run together.
 
 ---
 
-## 10. Known follow-up
+## 11. Known follow-up
 
 - **Migrate chat to Supabase Realtime private channels (Realtime Authorization).**
   This restores instant delivery for students *and* removes the 3s poll (cutting
@@ -198,7 +243,7 @@ not unlock access by design.
 
 ---
 
-## 11. Rollback
+## 12. Rollback
 
 - **CLI:** `netlify deploy --build --prod` from an earlier commit, or use
   **Netlify → Deploys → [pick a previous deploy] → Publish deploy**.
