@@ -661,7 +661,7 @@ export default function LandingPage({ user, isAdmin }) {
                 <div>
                   <h3 className="text-base font-bold text-gray-900 mb-1">Learning Career Expert Support Examples</h3>
                   <p className="text-gray-600 text-sm leading-relaxed">
-                    Job search guidance, resume upgrade, time management, career choices, interview skills, work/life balance, presentation techniques, research process development, and many other critical learning/career development topics.
+                    <a href="/pdf-links/Career-Search.pdf" target="_blank" rel="noreferrer" className="underline text-blue-600">Job search guidance</a>, <a href="/pdf-links/Resume-Guide.pdf" target="_blank" rel="noreferrer" className="underline text-blue-600">resume upgrade</a>, <a href="/pdf-links/Time-Management.pdf" target="_blank" rel="noreferrer" className="underline text-blue-600">time management</a>, career choices, <a href="/pdf-links/Interview-Guide.pdf" target="_blank" rel="noreferrer" className="underline text-blue-600">interview skills</a>, work/life balance, <a href="/pdf-links/Presentation-Techniques.pdf" target="_blank" rel="noreferrer" className="underline text-blue-600">presentation techniques</a>, <a href="/pdf-links/Research-Process.pdf" target="_blank" rel="noreferrer" className="underline text-blue-600">research process</a> development, and many other critical learning/career development topics.
                   </p>
                   <p className="text-gray-600 text-sm leading-relaxed mt-2">
                     Quick response when you need answers on skill building related topics from 9 am to midnight 7 days each week.
